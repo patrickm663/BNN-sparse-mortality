@@ -200,12 +200,15 @@ function lee_carter_forecast(kappa, t, N)
 	kappa_proj = Matrix{Float64}(undef, t, N)
 	μ, σ = lee_carter_sigma_mle(kappa, t)
 
+	global ϵ = 0
+
 	for s in 1:N
+		ϵ = ϵ + 1
 		for pr in 1:t
 			if pr == 1
 				kappa_proj[pr, s] = kappa[end]
 			else
-				kappa_proj[pr, s] = kappa_proj[pr-1, s] + rand(Xoshiro(1456789+s+pr), Normal(μ, sqrt(σ)))
+				kappa_proj[pr, s] = kappa_proj[pr-1, s] + rand(Xoshiro(1456789+ϵ), Normal(μ, sqrt(σ)))
 			end
 		end
 	end
@@ -263,6 +266,91 @@ md"""
 The Age Plot function is called internally in the above BNN function. It produces 100 000 posterior estimates for plotting.
 """
 
+# ╔═╡ cef77b70-d171-4254-9fe7-0a6b0ce8ede3
+function lee_carter_full_forecast(sample_N)
+	lc_pred_males_samples = lee_carter_forecast(kappa_males, 21, sample_N)
+	
+	kappa_males_forecast_mean = mean(lc_pred_males_samples; dims=2)
+	log_LC_test_males_mean = vcat((alpha_males .+ beta_males .* kappa_males_forecast_mean')...)
+	
+	kappa_males_forecast_l05 = quantile.(eachrow(lc_pred_males_samples), 0.95)
+	log_LC_test_males_l05 = vcat((alpha_males .+ beta_males .* kappa_males_forecast_l05')...)
+
+	kappa_males_forecast_med = quantile.(eachrow(lc_pred_males_samples), 0.5)
+	log_LC_test_males_med = vcat((alpha_males .+ beta_males .* kappa_males_forecast_med')...)
+	
+	kappa_males_forecast_u95 = quantile.(eachrow(lc_pred_males_samples), 0.05)
+	log_LC_test_males_u95 = vcat((alpha_males .+ beta_males .* kappa_males_forecast_u95')...)
+
+	lc_pred_females_samples = lee_carter_forecast(kappa_females, 21, sample_N)
+	
+	kappa_females_forecast_mean = mean(lc_pred_females_samples; dims=2)
+	log_LC_test_females_mean = vcat((alpha_females .+ beta_females .* kappa_females_forecast_mean')...)
+	
+	kappa_females_forecast_l05 = quantile.(eachrow(lc_pred_females_samples), 0.95)
+	log_LC_test_females_l05 = vcat((alpha_females .+ beta_females .* kappa_females_forecast_l05')...)
+
+	kappa_females_forecast_med = quantile.(eachrow(lc_pred_females_samples), 0.5)
+	log_LC_test_females_med = vcat((alpha_females .+ beta_females .* kappa_females_forecast_med')...)
+	
+	kappa_females_forecast_u95 = quantile.(eachrow(lc_pred_females_samples), 0.05)
+	log_LC_test_females_u95 = vcat((alpha_females .+ beta_females .* kappa_females_forecast_u95')...)
+
+	return log_LC_test_males_mean, log_LC_test_males_l05, log_LC_test_males_u95, log_LC_test_females_mean, log_LC_test_females_l05, log_LC_test_females_u95, log_LC_test_males_med, log_LC_test_females_med
+end
+
+# ╔═╡ d1208799-3cf9-4f26-8a4a-b88ae2a03108
+function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_, training_state)
+	
+	sample_N = max(N, 10_000)
+	nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_)[1])
+	posterior_samples = sample(Xoshiro(1456789), ch, sample_N)
+	θ_samples = MCMCChains.group(posterior_samples, :parameters).value
+	θ_for_MAP = MCMCChains.group(ch, :parameters).value
+
+	# BNN samples
+	for i ∈ 1:sample_N
+		nn_pred_y = nn_forward(X_', θ_samples[i, :], nn, ps, st)
+		nn_pred_samples[i, :] .= nn_pred_y
+	end
+
+	nn_pred_mean = mean(nn_pred_samples; dims=1)'
+	nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
+	nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
+	nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
+	nn_pred_MAP =  nn_forward(X_', θ_for_MAP[idx, :], nn, ps, st)
+
+	# Apply PICP and MPIW
+	PICP(lb, ub, dp) = sum(lb .≤ dp .≤ ub) / size(dp)[1]
+	MPIW(lb, ub) = sum(ub .- lb) / size(lb)[1]
+
+	pred_error_df = DataFrame(:Score => ["PICP", "MPIW", "MSE_mean", "MSE_median"], :BNN => zeros(4), :LC => zeros(4))
+	
+	pred_error_df[1, :BNN] = PICP(nn_pred_l05, nn_pred_u95, y_)
+	pred_error_df[2, :BNN] = MPIW(nn_pred_l05, nn_pred_u95)
+	pred_error_df[3, :BNN] = mean((nn_pred_mean .- y_) .^ 2)
+	pred_error_df[4, :BNN] = mean((nn_pred_median .- y_) .^ 2)
+
+	if training_state == "TEST"
+			
+		log_LC_test_males_mean, log_LC_test_males_l05, log_LC_test_males_u95, log_LC_test_females_mean, log_LC_test_females_l05, log_LC_test_females_u95, log_LC_test_males_med, log_LC_test_females_med = lee_carter_full_forecast(sample_N)
+
+		log_LC_test_l05 = vcat([log_LC_test_females_l05, log_LC_test_males_l05]...)
+		log_LC_test_u95 = vcat([log_LC_test_females_u95, log_LC_test_males_u95]...)
+		log_LC_test_mean = vcat([log_LC_test_females_mean, log_LC_test_males_mean]...)
+		log_LC_test_med = vcat([log_LC_test_females_med, log_LC_test_males_med]...)
+
+		pred_error_df[1, :LC] = PICP(log_LC_test_l05, log_LC_test_u95, USA_MX_matrix[(USA_MX_matrix[:, 1] .> 2000), 4])
+		pred_error_df[2, :LC] = MPIW(log_LC_test_l05, log_LC_test_u95)
+
+		pred_error_df[3, :LC] = mean((log_LC_test_mean .- y_) .^ 2)
+		pred_error_df[4, :LC] = mean((log_LC_test_med .- y_) .^ 2)
+	end
+
+	CSV.write("results_auto/pred_error_MSE_$(size_of_data_split)-$(N)-$(training_state).csv", pred_error_df)
+	
+end
+
 # ╔═╡ e00a61f5-b488-48c2-a3b5-79f6f1f44081
 function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_)
 	if year ≤ 2000
@@ -276,9 +364,10 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 	sample_N = max(N, 10_000)
 	nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
 	posterior_samples = sample(Xoshiro(1456789), ch, sample_N)
-	θ_samples = posterior_samples#MCMCChains.group(posterior_samples, :parameters).value
+	θ_samples = MCMCChains.group(posterior_samples, :parameters).value
+	θ_for_MAP = MCMCChains.group(ch, :parameters).value
 
-	#CSV.write("results_auto/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_samples[:, :, 1]), :auto))
+	CSV.write("results_auto/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_samples[:, :, 1]), :auto))
 
 	# BNN samples
 	for i ∈ 1:sample_N
@@ -290,43 +379,40 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 	nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
 	nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
 	nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
-	nn_pred_MAP =  nn_forward(X_test_', θ_samples[idx, :], nn, ps, st)
+	nn_pred_MAP =  nn_forward(X_test_', θ_for_MAP[idx, :], nn, ps, st)
 
-	pred_interval_error(lb, ub, df) = sum(lb .≤ df .≤ ub) / sum(abs.(ub .- lb))
-
-	pred_error_df = DataFrame(:BNN => [0.0], :LC_males => [0.0], :LC_females => [0.0])
-	
-	pred_error_df[1, :BNN] = pred_interval_error(nn_pred_l05, nn_pred_u95, USA_MX_matrix[(USA_MX_matrix[:, 1] .== year) .&& (USA_MX_matrix[:, 3] .== gender), 4])
+	# Apply PICP and MPIW
+	PICP(lb, ub, dp) = sum(lb .≤ dp .≤ ub) / size(dp)[1]
+	MPIW(lb, ub) = sum(ub .- lb) / size(lb)[1]
 
 	fnn_pred = Lux.apply(tstate_.model, X_test_', tstate_.parameters, tstate_.states)[1]
 
 	if year > 2000
 		if gender == 1
-			lc_pred_males_samples = lee_carter_forecast(kappa_males, year-2001+1, sample_N)
 			
-			kappa_males_forecast_mean = mean(lc_pred_males_samples; dims=2)
+			lc_pred_males_samples = lee_carter_forecast(kappa_males, year-2001+1, sample_N)[end, :]
+			
+			kappa_males_forecast_mean = mean(lc_pred_males_samples; dims=1)
 			log_LC_test_males_mean = alpha_males .+ beta_males .* kappa_males_forecast_mean'
 			
-			kappa_males_forecast_l05 = quantile.(eachrow(lc_pred_males_samples), 0.05)
+			kappa_males_forecast_l05 = quantile.(eachcol(lc_pred_males_samples), 0.95)
 			log_LC_test_males_l05 = alpha_males .+ beta_males .* kappa_males_forecast_l05'
 			
-			kappa_males_forecast_u95 = quantile.(eachrow(lc_pred_males_samples), 0.95)
-			log_LC_test_males_u95 = alpha_males .+ beta_males .* kappa_males_forecast_u95'
+			kappa_males_forecast_u95 = quantile.(eachcol(lc_pred_males_samples), 0.05)
+			log_LC_test_males_u95 = (alpha_males .+ beta_males .* kappa_males_forecast_u95')
 
-			pred_error_df[1, :LC_males] = pred_interval_error(log_LC_test_males_l05, log_LC_test_males_u95, USA_MX_matrix[(USA_MX_matrix[:, 1] .== year) .&& (USA_MX_matrix[:, 3] .== gender), 4])
 		else
-			lc_pred_females_samples = lee_carter_forecast(kappa_females, year-2001+1, sample_N)
+			lc_pred_females_samples = lee_carter_forecast(kappa_females, year-2001+1, sample_N)[end, :]
 			
-			kappa_females_forecast_mean = mean(lc_pred_females_samples; dims=2)
+			kappa_females_forecast_mean = mean(lc_pred_females_samples; dims=1)
 			log_LC_test_females_mean = alpha_females .+ beta_females .* kappa_females_forecast_mean'
 			
-			kappa_females_forecast_l05 = quantile.(eachrow(lc_pred_females_samples), 0.05)
+			kappa_females_forecast_l05 = quantile.(eachcol(lc_pred_females_samples), 0.95)
 			log_LC_test_females_l05 = alpha_females .+ beta_females .* kappa_females_forecast_l05'
 			
-			kappa_females_forecast_u95 = quantile.(eachrow(lc_pred_females_samples), 0.95)
+			kappa_females_forecast_u95 = quantile.(eachcol(lc_pred_females_samples), 0.05)
 			log_LC_test_females_u95 = alpha_females .+ beta_females .* kappa_females_forecast_u95'
 			
-			pred_error_df[1, :LC_females] = pred_interval_error(log_LC_test_females_l05, log_LC_test_females_u95, USA_MX_matrix[(USA_MX_matrix[:, 1] .== year) .&& (USA_MX_matrix[:, 3] .== gender), 4])
 		end
 	end
 	
@@ -356,10 +442,10 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 			end
 		else
 			if gender == 1
-				plot!(0:100, log_LC_test_males_l05, fillrange = log_LC_test_males_u95, color=:brown, width=.1, alpha=.2, label="")
+				plot!(0:100, log_LC_test_males_l05, fillrange = log_LC_test_males_u95, color=:brown, width=.1, alpha=.4, label="")
 				plot!(0:100, log_LC_test_males_mean, label="", color=:brown, width=2, style=:dash)
 			else
-				plot!(0:100, log_LC_test_females_l05, fillrange = log_LC_test_females_u95, color=:brown, width=.1, alpha=.2, label="")
+				plot!(0:100, log_LC_test_females_l05, fillrange = log_LC_test_females_u95, color=:brown, width=.1, alpha=.4, label="")
 				plot!(0:100, log_LC_test_females_mean, label="", color=:brown, width=2, style=:dash)
 			end
 		end
@@ -388,7 +474,7 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 		plot!()
 	end
 
-	#CSV.write("results_auto/pred_error_MSE_$(year)-$(gender)-$(size_of_data_split)-$(N).csv", pred_error_df)
+	p_
 
 	savefig(p_, "results_auto/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN_v2.png")
 	
@@ -423,7 +509,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 
 	loss_function = MSELoss()
 
-	tstate = Training.TrainState(rng, fnn, opt)
+	tstate = Training.TrainState(fnn, ps_fnn, st_fnn, opt)
 
 	vjp_rule = AutoTracker()
 
@@ -445,19 +531,6 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	savefig(plot(half_N:N, losses_[half_N:N], title="FNN Training Losses $(size_of_data_split)", xlab="Epochs", ylab="MSE"), "results_auto/FNN_losses_plot_$(size_of_data_split)_$(N).png")
 	
 	FNN_forward(X_) = Lux.apply(tstate.model, X_, tstate.parameters, tstate.states)[1]
-
-	FNN_MSE_df = DataFrame(:State => ["", "", ""], :MSE => [0.0, 0.0, 0.0], :RMSE => [0.0, 0.0, 0.0], :Time_s => [0.0, 0.0, 0.0])
-	FNN_MSE_df[1, :State] = "FNN_training_$(size_of_data_split)"
-	FNN_MSE_df[1, :MSE] = mean((FNN_forward(Xs') .- Matrix(ys')) .^ 2)
-	FNN_MSE_df[1, :RMSE] = sqrt(FNN_MSE_df[1, :MSE])
-	FNN_MSE_df[1, :Time_s] = dt_fnn
-	FNN_MSE_df[2, :State] = "FNN_full_training_$(size_of_data_split)"
-	FNN_MSE_df[2, :MSE] = mean((FNN_forward(X_train') .- Matrix(y_train')) .^ 2)
-	FNN_MSE_df[2, :RMSE] = sqrt(FNN_MSE_df[2, :MSE])
-	FNN_MSE_df[3, :State] = "FNN_testing_$(size_of_data_split)"
-	FNN_MSE_df[3, :MSE] = mean((FNN_forward(X_test') .- Matrix(y_test')) .^ 2)
-	FNN_MSE_df[3, :RMSE] = sqrt(FNN_MSE_df[3, :MSE])
-	CSV.write("results_auto/FNN_MSE_$(size_of_data_split)_$(N)_v2.csv", FNN_MSE_df)
 
 	# Create a regularization term and a Gaussian prior variance term.
 	alpha = 0.8
@@ -494,44 +567,56 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	end
 
 	t_bnn = time()
-	θ = zeros(100, 257)
-	for j ∈ 1:100
-		ch = sample(
-			Xoshiro(1456789+j+100),
-			bayes_nn(Xs', ys), 
+	ch = sample(
+		Xoshiro(1456789),
+		bayes_nn(Xs', ys), 
+		NUTS(0.9; adtype=AutoTracker()),
+		#HMCDA(200, 0.9, 0.1; adtype=AutoTracker()),
+		#SGHMC(; learning_rate=1e-8, momentum_decay=0.55, adtype=AutoTracker()),
+		N; 
+		discard_adapt=false,
+		progress=true		
+	)
+		
+	#θ = zeros(100, 257)
+	#for j ∈ 1:100
+	#	ch = sample(
+	#		Xoshiro(1456789+j+100),
+	#		bayes_nn(Xs', ys), 
 			#NUTS(0.55; adtype=AutoTracker()),
 			#HMCDA(200, 0.9, 0.1; adtype=AutoTracker()),
-			SGHMC(; learning_rate=1e-8, momentum_decay=0.55, adtype=AutoTracker()),
-			N; 
-			discard_adapt=false,
-			progress=false
-			
-		)
+	#		SGHMC(; learning_rate=1e-8, momentum_decay=0.55, adtype=AutoTracker()),
+	#		N; 
+	#		discard_adapt=false,
+	#		progress=false		
+	#	)
 		
 	
-		θ_ = MCMCChains.group(ch, :parameters).value[end, :, 1]
-		θ[j, :] = θ_
-	end
+	#	θ_ = MCMCChains.group(ch, :parameters).value[end, :, 1]
+	#	θ[j, :] = θ_
+	#end
 	dt_bnn = time() - t_bnn
 
-	CSV.write("results_auto/theta_ch_100.csv", DataFrame(θ, :auto))
+	CSV.write("results_auto/theta_ch_100.csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
 
 	# Get MAP
-	#_, idx = findmax(ch[:lp])
-	#idx = idx.I[1]
-	idx = 100
+	_, idx = findmax(ch[:lp])
+	idx = idx.I[1]
+	#idx = 100
 
 	nn_forward_(x, θ, nn, ps, st) = vec(first(nn(x, vector_to_parameters(θ, ps), st)))
 
 	# Save summary of samples
-	#CSV.write("results_auto/chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
+	CSV.write("results_auto/chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
 
 	# Save trace plot
-	#savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "results_auto/chains_plot_$(size_of_data_split)_$(N)_v2.png")
-	savefig(StatsPlots.plot(θ[1:end, 1:80:end]), "results_auto/chains_plot_$(size_of_data_split)_$(N)_v2.png")
+	savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "results_auto/chains_plot_$(size_of_data_split)_$(N)_v2.png")
+	#savefig(StatsPlots.plot(θ[1:end, 1:80:end]), "results_auto/chains_plot_$(size_of_data_split)_$(N)_v2.png")
+
+	θ = MCMCChains.group(ch, :parameters).value
 
 	# Save MSE
-	MSE_df = DataFrame(:State => ["", "", ""], :MSE => [0.0, 0.0, 0.0], :RMSE => [0.0, 0.0, 0.0], :Time_s => [0.0, 0.0, 0.0])
+	MSE_df = DataFrame(:State => ["", "", "", "", "", "", "", ""], :MSE => zeros(8), :RMSE => zeros(8), :Time_s => zeros(8))
 	MSE_df[1, :State] = "BNN_training_$(size_of_data_split)"
 	MSE_df[1, :MSE] = mean((nn_forward(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
 	MSE_df[1, :RMSE] = sqrt(MSE_df[1, :MSE])
@@ -542,30 +627,57 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	MSE_df[3, :State] = "BNN_testing_$(size_of_data_split)"
 	MSE_df[3, :MSE] = mean((nn_forward(X_test', θ[idx, :], nn, ps, st) .- y_test) .^ 2)
 	MSE_df[3, :RMSE] = sqrt(MSE_df[3, :MSE])
+	MSE_df[4, :State] = "FNN_training_$(size_of_data_split)"
+	MSE_df[4, :MSE] = mean((FNN_forward(Xs') .- Matrix(ys')) .^ 2)
+	MSE_df[4, :RMSE] = sqrt(MSE_df[4, :MSE])
+	MSE_df[4, :Time_s] = dt_fnn
+	MSE_df[5, :State] = "FNN_full_training_$(size_of_data_split)"
+	MSE_df[5, :MSE] = mean((FNN_forward(X_train') .- Matrix(y_train')) .^ 2)
+	MSE_df[5, :RMSE] = sqrt(MSE_df[5, :MSE])
+	MSE_df[6, :State] = "FNN_testing_$(size_of_data_split)"
+	MSE_df[6, :MSE] = mean((FNN_forward(X_test') .- Matrix(y_test')) .^ 2)
+	MSE_df[6, :RMSE] = sqrt(MSE_df[6, :MSE])
+	MSE_df[7, :State] = "LC_full_training"
+	MSE_df[7, :MSE] = mean((vcat([vcat(log_LC_females...), vcat(log_LC_males...)]...) .- USA_MX_matrix[(USA_MX_matrix[:, 1] .≤ 2000), 4]) .^ 2)
+	MSE_df[7, :RMSE] = sqrt(MSE_df[7, :MSE])
+
+	log_LC_test_males_mean, log_LC_test_males_l05, log_LC_test_males_u95, log_LC_test_females_mean, log_LC_test_females_l05, log_LC_test_females_u95, log_LC_test_males_med, log_LC_test_females_med = lee_carter_full_forecast(N)
+
+	MSE_df[8, :State] = "LC_testing"
+	MSE_df[8, :MSE] = mean((vcat([vcat(log_LC_test_females_mean...), vcat(log_LC_test_males_mean...)]...) .- USA_MX_matrix[(USA_MX_matrix[:, 1] .> 2000), 4]) .^ 2)
+	MSE_df[8, :RMSE] = sqrt(MSE_df[8, :MSE])
+
 	CSV.write("results_auto/BNN_MSE_$(size_of_data_split)_$(N)_v2.csv", MSE_df)
 
 	# Generate and save plots
 	for i ∈ 1950:10:2021
 		for j ∈ 0:1
-			age_plot(i, j, θ, nn, ps, st, idx, perc, size_of_data_split, N, tstate)
+			age_plot(i, j, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate)
 		end
 	end
 
-	return θ, θ, nn, ps, st, idx
+	pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TRAIN")
+	pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST")
+
+	return ch, θ, nn, ps, st, idx
 end
 
 # ╔═╡ 0158f329-3f09-4a1a-ab2f-f1595212b236
 begin
-	for i ∈ [0.01]#, 0.05, 0.1, 0.25, 0.5, 1.0]
-		percent_ = "$(Int(i*100))%"
+	for i ∈ [0.005, 0.01]# 0.05, 0.1, 0.25, 0.5, 1.0]
+		if i < 0.01
+			percent_ = "half-%" #"$(Int(i*100))%"
+		else
+			percent_ = "$(Int(i*100))%"
+		end
 		one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
 		X_train_one_p = X_train[one_p, :]
 		y_train_one_p = y_train[one_p]
 		samples_one_p_ = USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :][one_p, :]
-		#CSV.write("results_auto/USA_MX_$(percent_).csv", DataFrame(samples_one_p_, [:Year, :Age, :Gender, :log_Mu]))
+		CSV.write("results_auto/USA_MX_$(percent_).csv", DataFrame(samples_one_p_, [:Year, :Age, :Gender, :log_Mu]))
 
 		if i < 0.1
-			N_length = 100
+			N_length = 5_000
 		elseif i < 0.5
 			N_length = 7_500
 		else
@@ -573,6 +685,7 @@ begin
 		end
 		
 		ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
+
 	end
 end
 
@@ -683,6 +796,8 @@ end
 # ╟─6dfb890f-853f-4634-8264-c28ee9d62354
 # ╠═0158f329-3f09-4a1a-ab2f-f1595212b236
 # ╟─576550d1-fb64-4edc-8610-0e8bd745711d
+# ╠═cef77b70-d171-4254-9fe7-0a6b0ce8ede3
+# ╠═d1208799-3cf9-4f26-8a4a-b88ae2a03108
 # ╠═e00a61f5-b488-48c2-a3b5-79f6f1f44081
 # ╠═a28f7cbe-a6ff-4d4b-b327-481c0e81f38d
 # ╠═9643784e-6dcb-40e5-b3f7-1f75bb43903f
