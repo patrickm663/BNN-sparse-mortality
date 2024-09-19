@@ -244,6 +244,21 @@ md"""
 This function acts as the "main" entry point. It constructs a traditional FNN and trains it using Adam optimiser, then it constructs a BNN and trains it using the NUTS inference methods. After training, the age plot is constructed. The Age Plot function does posterior sampling on the parameters of the BNN to produce prediction intervals.
 """
 
+# ╔═╡ dafa4fa6-8616-4c2e-8f27-c71e29fbe50d
+function append_BNN_params(N, full_param_length, random_param_length, ch, initial_params, bkwd)
+	θ_full = zeros(N, full_param_length)
+	
+	for i ∈ 1:N
+		if bkwd == true
+			θ_full[i, :] = vcat([initial_params[1:(end-random_param_length)], MCMCChains.group(ch, :parameters).value[i, :, :]]...)
+		else
+			θ_full[i, :] = vcat([MCMCChains.group(ch, :parameters).value[i, :, :], initial_params[(random_param_length+1):end]]...)
+		end
+	end
+	
+	return θ_full
+end
+
 # ╔═╡ 35a6b42c-1704-4c0e-b946-75f47b8dd70b
 function vector_to_parameters_(ps_new::AbstractVector, ps::NamedTuple)
 	@assert length(ps_new) == Lux.parameterlength(ps)
@@ -266,9 +281,6 @@ Loops over different percentages (1%, 5%, etc.) of the training data and call th
 
 # ╔═╡ a9fc086b-61d9-4ced-9dca-59a53fa83e39
 device = gpu_device()
-
-# ╔═╡ 1dfe1260-aeb2-40d2-8dcb-b2a1645139d3
-
 
 # ╔═╡ 576550d1-fb64-4edc-8610-0e8bd745711d
 md"""
@@ -309,15 +321,10 @@ function lee_carter_full_forecast(sample_N)
 end
 
 # ╔═╡ d1208799-3cf9-4f26-8a4a-b88ae2a03108
-function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_, training_state; init_params=0)
+function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_, training_state, θ_samples, θ_for_MAP)
 	
 	sample_N = max(N, 10_000)
 	nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_)[1])
-	posterior_samples = sample(Xoshiro(1456789), ch, sample_N)
-	#θ_samples = MCMCChains.group(posterior_samples, :parameters).value
-	θ_samples = vcat([init_params[1:(end-9)], MCMCChains.group(posterior_samples, :parameters).value]...)
-	#θ_for_MAP = MCMCChains.group(ch, :parameters).value
-	θ_for_MAP = vcat([init_params[1:(end-9)], MCMCChains.group(ch, :parameters).value]...)
 
 	# BNN samples
 	for i ∈ 1:sample_N
@@ -362,8 +369,24 @@ function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_spl
 	
 end
 
+# ╔═╡ 0e8cc4c5-2ad2-493d-94e1-e312518d6ddd
+function sample_BNN_parameters(ch, N, size_of_data_split; pseudo_bnn=Dict("init_params" => 0, "flag" => false, "random_params" => 0, "full_params" => 0), bkwd)
+	sample_N = max(N, 10_000)
+	posterior_samples = sample(Xoshiro(1456789), ch, sample_N)
+	
+	if pseudo_bnn["flag"] == true
+		θ_samples = append_BNN_params(sample_N, pseudo_bnn["full_params"], pseudo_bnn["random_params"], posterior_samples, pseudo_bnn["init_params"], bkwd)
+		θ_for_MAP = append_BNN_params(N, pseudo_bnn["full_params"], pseudo_bnn["random_params"], ch, pseudo_bnn["init_params"], bkwd)
+	else
+		θ_samples = MCMCChains.group(posterior_samples, :parameters).value
+		θ_for_MAP = MCMCChains.group(ch, :parameters).value
+	end
+
+	return θ_samples, θ_for_MAP
+end
+
 # ╔═╡ e00a61f5-b488-48c2-a3b5-79f6f1f44081
-function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_; init_params=0)
+function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_, θ_samples, θ_for_MAP; pseudo="")
 	if year ≤ 2000
 		X_test_ = X_train[(X_train[:, 1] .== (year .- year_mu) ./ year_sigma) .&& (X_train[:, 3] .== gender), :]
 		samples_one_p = USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :][perc, :]
@@ -374,13 +397,6 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
 	sample_N = max(N, 10_000)
 	nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
-	posterior_samples = sample(Xoshiro(1456789), ch, sample_N)
-	#θ_samples = MCMCChains.group(posterior_samples, :parameters).value
-	θ_samples = vcat([init_params[1:(end-9)], MCMCChains.group(posterior_samples, :parameters).value]...)
-	#θ_for_MAP = MCMCChains.group(ch, :parameters).value
-	θ_for_MAP = vcat([init_params[1:(end-9)], MCMCChains.group(ch, :parameters).value]...)
-
-	CSV.write("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_samples[:, :, 1]), :auto))
 
 	# BNN samples
 	for i ∈ 1:sample_N
@@ -489,13 +505,13 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
 	p_
 
-	savefig(p_, "results/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN.png")
+	savefig(p_, "results/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN$(pseudo).png")
 	
 	return p_
 end
 
 # ╔═╡ 1e172ba4-60a7-4011-b756-8bb47b1d8a92
-function BNN(Xs, ys, N, perc, size_of_data_split)
+function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 	half_N = Int(ceil(N/2))
 	
 	# Construct a neural network using Lux
@@ -536,27 +552,14 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	end
 	
 	t_fnn = time()
-	tstate, losses_ = train_FNN(tstate, vjp_rule, (Xs', Matrix(ys')), N)
+	tstate, losses_ = train_FNN(tstate, vjp_rule, (Xs', Matrix(ys')), max(3N, 5_000))
 	dt_fnn = time() - t_fnn
 
 	CSV.write("results/FNN_losses_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(losses_'), :auto))
 	
-	savefig(plot(half_N:N, losses_[half_N:N], title="FNN Training Losses $(size_of_data_split)", xlab="Epochs", ylab="MSE"), "results/FNN_losses_plot_$(size_of_data_split)_$(N).png")
+	savefig(plot(half_N:length(losses_), losses_[half_N:end], title="FNN Training Losses $(size_of_data_split)", xlab="Epochs", ylab="MSE"), "results/FNN_losses_plot_$(size_of_data_split)_$(N).png")
 	
 	FNN_forward(X_) = Lux.apply(tstate.model, X_, tstate.parameters, tstate.states)[1]
-
-	#@show tstate.parameters
-	init_params = zeros(Lux.parameterlength(tstate.parameters))
-	m = 0
-	for i in 1:length(tstate.parameters)
-		for j in 1:2
-			init_params_ = vcat(tstate.parameters[i][j]...)
-			for l in 1:length(init_params_)
-				m = m + 1
-				init_params[m] = init_params_[l]
-			end
-		end
-	end
 
 	# Create a regularization term and a Gaussian prior variance term.
 	alpha = 0.8
@@ -574,19 +577,17 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	end
 
 	# Specify the probabilistic model.
-	@model function bayes_nn(xs, y, init_param, ::Type{T} = Float64) where {T}
+	@model function bayes_nn(xs, y, ::Type{T} = Float64) where {T}
 
 		# HalfNormal prior on σ
 		σ ~ truncated(Normal(0, 1); lower=1e-9)
 	
 	    # Sample the parameters from a MvNormal with 0 mean and constant variance
 	    nparameters = Lux.parameterlength(nn)
-	    parameters ~ MvNormal(zeros(9), (sig^2) .* I) #zeros(nparameters)
-		#parameters = vcat([init_params[(end-9):end], parameters_sample]...)
-	#@show parameters
+	    parameters ~ MvNormal(zeros(nparameters), (sig^2) .* I)
 	
 	    # Forward NN to make predictions
-	    preds, st = nn(xs, vector_to_parameters(vcat([init_param[1:(end-9)], parameters]...), ps), st)
+	    preds, st = nn(xs, vector_to_parameters(parameters, ps), st)
 	
 	    # Age-range log(μ) are each given a MvNormal likelihood with constant variance
 	    y ~ MvNormal(vec(preds), (σ^2) .* I)
@@ -595,17 +596,19 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	end
 
 	t_bnn = time()
-	ch = sample(
-		Xoshiro(1456789),
-		bayes_nn(Xs', ys, init_params), 
-		NUTS(0.85; adtype=AutoTracker()),
-		#HMCDA(200, 0.9, 0.1; adtype=AutoTracker()),
-		#SGHMC(; learning_rate=1e-8, momentum_decay=0.55, adtype=AutoTracker()),
-		N; 
-		discard_adapt=false,
-		progress=true
-	)
-		
+	if sampling_algorithm == "NUTS"
+		ch = sample(
+			Xoshiro(1456789),
+			bayes_nn(Xs', ys), 
+			NUTS(0.85; adtype=AutoTracker()),
+			#HMCDA(200, 0.9, 0.1; adtype=AutoTracker()),
+			#SGHMC(; learning_rate=1e-8, momentum_decay=0.55, adtype=AutoTracker()),
+			N; 
+			discard_adapt=false,
+			progress=true
+		)
+	end
+			
 	#θ = zeros(100, 257)
 	#for j ∈ 1:100
 	#	ch = sample(
@@ -630,7 +633,6 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	# Get MAP
 	_, idx = findmax(ch[:lp])
 	idx = idx.I[1]
-	#idx = 100
 
 	nn_forward_(x, θ, nn, ps, st) = vec(first(nn(x, vector_to_parameters(θ, ps), st)))
 
@@ -638,12 +640,9 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 	CSV.write("results/summary_chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
 
 	# Save trace plot
-	#savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "results/chains_plot_$(size_of_data_split)_$(N).png")
-	savefig(StatsPlots.plot(ch[half_N:end, 1:end, :]), "results/chains_plot_$(size_of_data_split)_$(N).png")
-	#savefig(StatsPlots.plot(θ[1:end, 1:80:end]), "results/chains_plot_$(size_of_data_split)_$(N).png")
+	savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "results/chains_plot_$(size_of_data_split)_$(N).png")
 
-	#θ = MCMCChains.group(ch, :parameters).value
-	θ = vcat([init_params[1:(end-9)], MCMCChains.group(ch, :parameters).value]...)
+	θ = MCMCChains.group(ch, :parameters).value
 
 	# Save MSE
 	MSE_df = DataFrame(:State => ["", "", "", "", "", "", "", ""], :MSE => zeros(8), :RMSE => zeros(8), :Time_s => zeros(8))
@@ -679,22 +678,213 @@ function BNN(Xs, ys, N, perc, size_of_data_split)
 
 	CSV.write("results/BNN_MSE_$(size_of_data_split)_$(N).csv", MSE_df)
 
+	θ_BNN_samples, θ_BNN_for_MAP = sample_BNN_parameters(ch, N, size_of_data_split; pseudo_bnn=Dict("init_params" => 0, "flag" => false, "random_params" => 0))
+
+	CSV.write("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
+
 	# Generate and save plots
 	for i ∈ 1950:10:2021
 		for j ∈ 0:1
-			age_plot(i, j, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate; init_params=init_param)
+			age_plot(i, j, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, θ_BNN_samples, θ_BNN_for_MAP)
 		end
 	end
 
-	pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TRAIN"; init_params=init_param)
-	pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST"; init_params=init_param)
+	pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TRAIN", θ_BNN_samples, θ_BNN_for_MAP)
+	pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
+
+	return ch, θ, nn, ps, st, idx
+end
+
+# ╔═╡ f79c4cff-9664-40e3-8e6f-ca17fdacc532
+function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=true)
+	half_N = Int(ceil(N/2))
+	
+	# Construct a neural network using Lux
+	nn = Chain(
+		Dense(size(Xs)[2] => 8, swish), 
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 1))
+
+	# Initialize the model weights and state
+	ps, st = Lux.setup(rng, nn)
+
+	fnn = Chain(
+		Dense(size(Xs)[2] => 8, swish), 
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 1))
+
+	ps_fnn, st_fnn = Lux.setup(rng, fnn)
+
+	opt = Adam(0.03f0)
+
+	loss_function = MSELoss()
+
+	tstate = Training.TrainState(fnn, ps_fnn, st_fnn, opt)
+
+	vjp_rule = AutoTracker()
+
+	function train_FNN(tstate::Training.TrainState, vjp, data, epochs)
+		losses = []
+	    for epoch in 1:epochs
+	        _, loss, _, tstate = Training.single_train_step!(vjp, loss_function, data, tstate)
+	      	push!(losses, loss)
+	    end
+	    return tstate, losses
+	end
+	
+	t_fnn = time()
+	tstate, losses_ = train_FNN(tstate, vjp_rule, (Xs', Matrix(ys')), max(3N, 5_000))
+	dt_fnn = time() - t_fnn
+
+	CSV.write("results/FNN_losses_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(losses_'), :auto))
+	
+	savefig(plot(half_N:length(losses_), losses_[half_N:end], title="FNN Training Losses $(size_of_data_split)", xlab="Epochs", ylab="MSE"), "results/FNN_losses_plot_$(size_of_data_split)_$(N).png")
+	
+	FNN_forward(X_) = Lux.apply(tstate.model, X_, tstate.parameters, tstate.states)[1]
+
+	function parameters_to_vectors(nn_param)
+		init_params = zeros(Lux.parameterlength(nn_param))
+		m = 0
+		for i in 1:length(nn_param)
+			for j in 1:2 # either weights or bias
+				init_params_ = vcat(deepcopy(nn_param[i][j])...)
+				for l in 1:length(init_params_)
+					m = m + 1
+					init_params[m] = init_params_[l]
+				end
+			end
+		end
+		return init_params
+	end
+
+	init_params = parameters_to_vectors(tstate.parameters)
+
+	# Create a regularization term and a Gaussian prior variance term.
+	alpha = 0.5
+	sig = 1.0 / sqrt(alpha)
+
+	function vector_to_parameters(ps_new::AbstractVector, ps::NamedTuple)
+	    @assert length(ps_new) == Lux.parameterlength(ps)
+	    i = 1
+	    function get_ps(x)
+	        z = reshape(view(ps_new, i:(i + length(x) - 1)), size(x))
+	        i += length(x)
+	        return z
+	    end
+	    return fmap(get_ps, ps)
+	end
+
+	# Specify the probabilistic model.
+	@model function bayes_nn(xs, y, init_param, random_params, bkwd, ::Type{T} = Float64) where {T}
+
+		# HalfNormal prior on σ
+		σ ~ truncated(Normal(0, 1); lower=1e-9)
+	
+	    # Sample the parameters from a MvNormal with 0 mean and constant variance
+	    nparameters = Lux.parameterlength(nn)
+	    parameters ~ MvNormal(zeros(random_params), (sig^2) .* I)
+	
+	    # Forward NN to make predictions
+		if bkwd == true
+	    	concat_params = vcat([init_param[1:(end-random_params)], parameters]...)
+		else
+			concat_params = vcat([parameters, init_param[(random_params+1):end], ]...)
+		end
+	
+		preds, st = nn(xs, vector_to_parameters(concat_params, ps), st)
+	
+	    # Age-range log(μ) are each given a MvNormal likelihood with constant variance
+	    y ~ MvNormal(vec(preds), (σ^2) .* I)
+	
+		return Nothing
+	end
+
+	t_bnn = time()
+	ch = sample(
+		Xoshiro(1456789),
+		bayes_nn(Xs', ys, init_params, random_params, bkwd), 
+		NUTS(0.85; adtype=AutoTracker()),
+		N; 
+		discard_adapt=false,
+		progress=true
+	)
+	
+	dt_bnn = time() - t_bnn
+
+	CSV.write("results/full_chains_$(size_of_data_split)_$(N)_pseudo.csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
+
+	# Get MAP
+	_, idx = findmax(ch[:lp])
+	idx = idx.I[1]
+
+	nn_forward_(x, θ, nn, ps, st) = vec(first(nn(x, vector_to_parameters(θ, ps), st)))
+
+	# Save summary of samples
+	CSV.write("results/summary_chains_$(size_of_data_split)_$(N)_pseudo.csv", DataFrame(describe(ch)[1]))
+
+	# Save trace plot
+	savefig(StatsPlots.plot(ch[half_N:end, 1:end, :]), "results/chains_plot_$(size_of_data_split)_$(N)_psuedo.png")
+
+	θ = append_BNN_params(N, Lux.parameterlength(nn), random_params, ch, init_params, bkwd)
+
+	# Save MSE
+	MSE_df = DataFrame(:State => ["", "", "", "", "", "", "", ""], :MSE => zeros(8), :RMSE => zeros(8), :Time_s => zeros(8))
+	MSE_df[1, :State] = "BNN_training_$(size_of_data_split)"
+	MSE_df[1, :MSE] = mean((nn_forward(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
+	MSE_df[1, :RMSE] = sqrt(MSE_df[1, :MSE])
+	MSE_df[1, :Time_s] = dt_bnn
+	MSE_df[2, :State] = "BNN_full_training_$(size_of_data_split)"
+	MSE_df[2, :MSE] = mean((nn_forward(X_train', θ[idx, :], nn, ps, st) .- y_train) .^ 2)
+	MSE_df[2, :RMSE] = sqrt(MSE_df[2, :MSE])
+	MSE_df[3, :State] = "BNN_testing_$(size_of_data_split)"
+	MSE_df[3, :MSE] = mean((nn_forward(X_test', θ[idx, :], nn, ps, st) .- y_test) .^ 2)
+	MSE_df[3, :RMSE] = sqrt(MSE_df[3, :MSE])
+	MSE_df[4, :State] = "FNN_training_$(size_of_data_split)"
+	MSE_df[4, :MSE] = mean((FNN_forward(Xs') .- Matrix(ys')) .^ 2)
+	MSE_df[4, :RMSE] = sqrt(MSE_df[4, :MSE])
+	MSE_df[4, :Time_s] = dt_fnn
+	MSE_df[5, :State] = "FNN_full_training_$(size_of_data_split)"
+	MSE_df[5, :MSE] = mean((FNN_forward(X_train') .- Matrix(y_train')) .^ 2)
+	MSE_df[5, :RMSE] = sqrt(MSE_df[5, :MSE])
+	MSE_df[6, :State] = "FNN_testing_$(size_of_data_split)"
+	MSE_df[6, :MSE] = mean((FNN_forward(X_test') .- Matrix(y_test')) .^ 2)
+	MSE_df[6, :RMSE] = sqrt(MSE_df[6, :MSE])
+	MSE_df[7, :State] = "LC_full_training"
+	MSE_df[7, :MSE] = mean((vcat([vcat(log_LC_females...), vcat(log_LC_males...)]...) .- USA_MX_matrix[(USA_MX_matrix[:, 1] .≤ 2000), 4]) .^ 2)
+	MSE_df[7, :RMSE] = sqrt(MSE_df[7, :MSE])
+
+	log_LC_test_males_mean, log_LC_test_males_l05, log_LC_test_males_u95, log_LC_test_females_mean, log_LC_test_females_l05, log_LC_test_females_u95, log_LC_test_males_med, log_LC_test_females_med = lee_carter_full_forecast(N)
+
+	MSE_df[8, :State] = "LC_testing"
+	MSE_df[8, :MSE] = mean((vcat([vcat(log_LC_test_females_mean...), vcat(log_LC_test_males_mean...)]...) .- USA_MX_matrix[(USA_MX_matrix[:, 1] .> 2000), 4]) .^ 2)
+	MSE_df[8, :RMSE] = sqrt(MSE_df[8, :MSE])
+
+	CSV.write("results/BNN_MSE_$(size_of_data_split)_$(N)_psuedo.csv", MSE_df)
+
+	θ_BNN_samples, θ_BNN_for_MAP = sample_BNN_parameters(ch, N, size_of_data_split; pseudo_bnn=Dict("init_params" => init_params, "flag" => true, "random_params" => random_params, "full_params" => Lux.parameterlength(nn)), bkwd)
+
+	CSV.write("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N)_pseudo.csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
+
+	# Generate and save plots
+	for i ∈ 1950:10:2021
+		for j ∈ 0:1
+			age_plot(i, j, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, θ_BNN_samples, θ_BNN_for_MAP; pseudo="-pseudo")
+		end
+	end
+
+	pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TRAIN", θ_BNN_samples, θ_BNN_for_MAP)
+	pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
 
 	return ch, θ, nn, ps, st, idx
 end
 
 # ╔═╡ 0158f329-3f09-4a1a-ab2f-f1595212b236
 begin
-	for i ∈ [0.005, 0.01, 0.05]#, 0.1, 0.25, 0.5, 1.0]
+	for i ∈ [0.5]#[0.005, 0.01]#, 0.05]#, 0.1, 0.25, 0.5, 1.0]
 		if i < 0.01
 			percent_ = "half-%" #"$(Int(i*100))%"
 		else
@@ -708,18 +898,19 @@ begin
 
 		# 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
 		if i == 0.005
-			N_length = 500
+			N_length = 1_500
 		elseif i == 0.01
-			N_length = 500
+			N_length = 1_500
 		elseif i == 0.05
-			N_length = 7_500
+			N_length = 500
 		elseif i == 0.1
-			N_length = 10_000
+			N_length = 500
 		elseif i > 0.1
-			N_length = 15_000
+			N_length = 1_000
 		end
-		
-		ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
+
+		#ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
+		ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN_pseudo(X_train_one_p, y_train_one_p, N_length, one_p, percent_, 15; bkwd=false)
 
 	end
 end
@@ -827,15 +1018,17 @@ end
 # ╠═de4ec6fd-7d3d-4871-8611-9824c8cabf72
 # ╟─a267e96d-d460-4204-a4a9-e4aa7dc29c1e
 # ╠═1e172ba4-60a7-4011-b756-8bb47b1d8a92
+# ╠═f79c4cff-9664-40e3-8e6f-ca17fdacc532
+# ╠═dafa4fa6-8616-4c2e-8f27-c71e29fbe50d
 # ╠═35a6b42c-1704-4c0e-b946-75f47b8dd70b
 # ╠═000d6486-ba8a-4260-9077-ef9f1d1fe34f
 # ╟─6dfb890f-853f-4634-8264-c28ee9d62354
 # ╠═0158f329-3f09-4a1a-ab2f-f1595212b236
 # ╠═a9fc086b-61d9-4ced-9dca-59a53fa83e39
-# ╠═1dfe1260-aeb2-40d2-8dcb-b2a1645139d3
 # ╟─576550d1-fb64-4edc-8610-0e8bd745711d
 # ╠═cef77b70-d171-4254-9fe7-0a6b0ce8ede3
 # ╠═d1208799-3cf9-4f26-8a4a-b88ae2a03108
+# ╠═0e8cc4c5-2ad2-493d-94e1-e312518d6ddd
 # ╠═e00a61f5-b488-48c2-a3b5-79f6f1f44081
 # ╠═a28f7cbe-a6ff-4d4b-b327-481c0e81f38d
 # ╠═9643784e-6dcb-40e5-b3f7-1f75bb43903f
