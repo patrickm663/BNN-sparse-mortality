@@ -695,6 +695,39 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 	return ch, θ, nn, ps, st, idx
 end
 
+# ╔═╡ 0158f329-3f09-4a1a-ab2f-f1595212b236
+begin
+	for i ∈ [0.5]#[0.005, 0.01]#, 0.05]#, 0.1, 0.25, 0.5, 1.0]
+		if i < 0.01
+			percent_ = "half-%" #"$(Int(i*100))%"
+		else
+			percent_ = "$(Int(i*100))%"
+		end
+		one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
+		X_train_one_p = X_train[one_p, :]
+		y_train_one_p = y_train[one_p]
+		samples_one_p_ = USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :][one_p, :]
+		CSV.write("results/USA_MX_$(percent_).csv", DataFrame(samples_one_p_, [:Year, :Age, :Gender, :log_Mu]))
+
+		# 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
+		if i == 0.005
+			N_length = 1_500
+		elseif i == 0.01
+			N_length = 1_500
+		elseif i == 0.05
+			N_length = 500
+		elseif i == 0.1
+			N_length = 500
+		elseif i > 0.1
+			N_length = 750
+		end
+
+		ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
+		#ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN_pseudo(X_train_one_p, y_train_one_p, N_length, one_p, percent_, 5; bkwd=false)
+
+	end
+end
+
 # ╔═╡ f79c4cff-9664-40e3-8e6f-ca17fdacc532
 function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=true)
 	half_N = Int(ceil(N/2))
@@ -764,7 +797,7 @@ function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=tru
 	init_params = parameters_to_vectors(tstate.parameters)
 
 	# Create a regularization term and a Gaussian prior variance term.
-	alpha = 0.5
+	alpha = 0.8
 	sig = 1.0 / sqrt(alpha)
 
 	function vector_to_parameters(ps_new::AbstractVector, ps::NamedTuple)
@@ -880,39 +913,6 @@ function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=tru
 	pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
 
 	return ch, θ, nn, ps, st, idx
-end
-
-# ╔═╡ 0158f329-3f09-4a1a-ab2f-f1595212b236
-begin
-	for i ∈ [0.5]#[0.005, 0.01]#, 0.05]#, 0.1, 0.25, 0.5, 1.0]
-		if i < 0.01
-			percent_ = "half-%" #"$(Int(i*100))%"
-		else
-			percent_ = "$(Int(i*100))%"
-		end
-		one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
-		X_train_one_p = X_train[one_p, :]
-		y_train_one_p = y_train[one_p]
-		samples_one_p_ = USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :][one_p, :]
-		CSV.write("results/USA_MX_$(percent_).csv", DataFrame(samples_one_p_, [:Year, :Age, :Gender, :log_Mu]))
-
-		# 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
-		if i == 0.005
-			N_length = 1_500
-		elseif i == 0.01
-			N_length = 1_500
-		elseif i == 0.05
-			N_length = 500
-		elseif i == 0.1
-			N_length = 500
-		elseif i > 0.1
-			N_length = 1_000
-		end
-
-		#ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
-		ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN_pseudo(X_train_one_p, y_train_one_p, N_length, one_p, percent_, 15; bkwd=false)
-
-	end
 end
 
 # ╔═╡ a28f7cbe-a6ff-4d4b-b327-481c0e81f38d
