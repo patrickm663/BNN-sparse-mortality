@@ -697,7 +697,7 @@ end
 
 # ╔═╡ 0158f329-3f09-4a1a-ab2f-f1595212b236
 begin
-	for i ∈ [0.5]#[0.005, 0.01]#, 0.05]#, 0.1, 0.25, 0.5, 1.0]
+	for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
 		if i < 0.01
 			percent_ = "half-%" #"$(Int(i*100))%"
 		else
@@ -711,15 +711,15 @@ begin
 
 		# 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
 		if i == 0.005
-			N_length = 1_500
+			N_length = 2_500
 		elseif i == 0.01
-			N_length = 1_500
+			N_length = 5_000
 		elseif i == 0.05
-			N_length = 500
+			N_length = 7_500
 		elseif i == 0.1
-			N_length = 500
+			N_length = 10_000
 		elseif i > 0.1
-			N_length = 750
+			N_length = 15_000
 		end
 
 		ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
