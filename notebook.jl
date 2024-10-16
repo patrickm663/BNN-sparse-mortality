@@ -13,9 +13,9 @@ end
 
 # ╔═╡ a8c535ac-8ccf-4718-8214-c230adcf0b75
 begin
-	using Lux, Tracker, Optimisers, Functors
+	using Lux, Tracker, Enzyme, Optimisers, Functors, Zygote
 	using DataFrames, CSV, HMD, Plots, StatsPlots
-	using Turing, Distributions
+	using Turing, Distributions, ProgressLogging
 	using Random, LinearAlgebra, ComponentArrays
 end
 
@@ -272,12 +272,48 @@ function vector_to_parameters_(ps_new::AbstractVector, ps::NamedTuple)
 end
 
 # ╔═╡ 000d6486-ba8a-4260-9077-ef9f1d1fe34f
-nn_forward(x, θ, nn, ps, st) = vec(first(nn(x, vector_to_parameters_(θ, ps), st)))
+function nn_forward(x, θ, nn, ps, st, σ_MAP; offset=0)
+	nn_output = vec(first(nn(x, vector_to_parameters_(θ, ps), st)))
+	return nn_output .+ rand(Xoshiro(1456789+offset), Normal(0.0, σ_MAP))
+end
 
 # ╔═╡ 6dfb890f-853f-4634-8264-c28ee9d62354
 md"""
 Loops over different percentages (1%, 5%, etc.) of the training data and call the "BNN" function.
 """
+
+# ╔═╡ 0158f329-3f09-4a1a-ab2f-f1595212b236
+begin
+	for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+		if i < 0.01
+			percent_ = "half-%"
+		else
+			percent_ = "$(Int(i*100))%"
+		end
+		one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
+		X_train_one_p = X_train[one_p, :]
+		y_train_one_p = y_train[one_p]
+		samples_one_p_ = USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :][one_p, :]
+		CSV.write("results/USA_MX_$(percent_).csv", DataFrame(samples_one_p_, [:Year, :Age, :Gender, :log_Mu]))
+
+		# 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
+		if i == 0.005
+			N_length = 2_500
+		elseif i == 0.01
+			N_length = 5_000
+		elseif i == 0.05
+			N_length = 7_500
+		elseif i == 0.1
+			N_length = 10_000
+		elseif i > 0.1
+			N_length = 15_000
+		end
+
+		#ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
+		#ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN_pseudo(X_train_one_p, y_train_one_p, N_length, one_p, percent_, 5; bkwd=false)
+
+	end
+end
 
 # ╔═╡ a9fc086b-61d9-4ced-9dca-59a53fa83e39
 device = gpu_device()
@@ -325,10 +361,11 @@ function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_spl
 	
 	sample_N = max(N, 10_000)
 	nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_)[1])
+	σ_MAP = MCMCChains.group(ch, :σ).value[idx, 1]
 
 	# BNN samples
 	for i ∈ 1:sample_N
-		nn_pred_y = nn_forward(X_', θ_samples[i, :], nn, ps, st)
+		nn_pred_y = nn_forward(X_', θ_samples[i, :], nn, ps, st, σ_MAP; offset=i)
 		nn_pred_samples[i, :] .= nn_pred_y
 	end
 
@@ -336,7 +373,7 @@ function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_spl
 	nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
 	nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
 	nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
-	nn_pred_MAP =  nn_forward(X_', θ_for_MAP[idx, :], nn, ps, st)
+	nn_pred_MAP =  nn_forward(X_', θ_for_MAP[idx, :], nn, ps, st, σ_MAP)
 
 	# Apply PICP and MPIW
 	PICP(lb, ub, dp) = sum(lb .≤ dp .≤ ub) / size(dp)[1]
@@ -370,7 +407,7 @@ function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_spl
 end
 
 # ╔═╡ 0e8cc4c5-2ad2-493d-94e1-e312518d6ddd
-function sample_BNN_parameters(ch, N, size_of_data_split; pseudo_bnn=Dict("init_params" => 0, "flag" => false, "random_params" => 0, "full_params" => 0), bkwd)
+function sample_BNN_parameters(ch, N, size_of_data_split; pseudo_bnn=Dict("init_params" => 0, "flag" => false, "random_params" => 0, "full_params" => 0), bkwd=false)
 	sample_N = max(N, 10_000)
 	posterior_samples = sample(Xoshiro(1456789), ch, sample_N)
 	
@@ -397,10 +434,11 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
 	sample_N = max(N, 10_000)
 	nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
+	σ_MAP = MCMCChains.group(ch, :σ).value[idx, 1]
 
 	# BNN samples
 	for i ∈ 1:sample_N
-		nn_pred_y = nn_forward(X_test_', θ_samples[i, :], nn, ps, st)
+		nn_pred_y = nn_forward(X_test_', θ_samples[i, :], nn, ps, st, σ_MAP; offset=i)
 		nn_pred_samples[i, :] .= nn_pred_y
 	end
 
@@ -408,7 +446,7 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 	nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
 	nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
 	nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
-	nn_pred_MAP =  nn_forward(X_test_', θ_for_MAP[idx, :], nn, ps, st)
+	nn_pred_MAP =  nn_forward(X_test_', θ_for_MAP[idx, :], nn, ps, st, σ_MAP)
 
 	# Apply PICP and MPIW
 	PICP(lb, ub, dp) = sum(lb .≤ dp .≤ ub) / size(dp)[1]
@@ -523,7 +561,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 		Dense(8 => 1))
 
 	# Initialize the model weights and state
-	ps, st = Lux.setup(rng, nn)
+	ps, st = Lux.setup(Xoshiro(1456789), nn)
 
 	fnn = Chain(
 		Dense(size(Xs)[2] => 8, swish), 
@@ -532,7 +570,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 		Dense(8 => 8, swish),
 		Dense(8 => 1))
 
-	ps_fnn, st_fnn = Lux.setup(rng, fnn)
+	ps_fnn, st_fnn = Lux.setup(Xoshiro(1456789), fnn)
 
 	opt = Adam(0.03f0)
 
@@ -552,7 +590,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 	end
 	
 	t_fnn = time()
-	tstate, losses_ = train_FNN(tstate, vjp_rule, (Xs', Matrix(ys')), max(3N, 5_000))
+	tstate, losses_ = train_FNN(tstate, vjp_rule, (Xs', Matrix(ys')), max(3N, 8_000))
 	dt_fnn = time() - t_fnn
 
 	CSV.write("results/FNN_losses_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(losses_'), :auto))
@@ -600,7 +638,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 		ch = sample(
 			Xoshiro(1456789),
 			bayes_nn(Xs', ys), 
-			NUTS(0.85; adtype=AutoTracker()),
+			NUTS(0.9; adtype=AutoTracker()),
 			#HMCDA(200, 0.9, 0.1; adtype=AutoTracker()),
 			#SGHMC(; learning_rate=1e-8, momentum_decay=0.55, adtype=AutoTracker()),
 			N; 
@@ -647,14 +685,14 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 	# Save MSE
 	MSE_df = DataFrame(:State => ["", "", "", "", "", "", "", ""], :MSE => zeros(8), :RMSE => zeros(8), :Time_s => zeros(8))
 	MSE_df[1, :State] = "BNN_training_$(size_of_data_split)"
-	MSE_df[1, :MSE] = mean((nn_forward(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
+	MSE_df[1, :MSE] = mean((nn_forward_(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
 	MSE_df[1, :RMSE] = sqrt(MSE_df[1, :MSE])
 	MSE_df[1, :Time_s] = dt_bnn
 	MSE_df[2, :State] = "BNN_full_training_$(size_of_data_split)"
-	MSE_df[2, :MSE] = mean((nn_forward(X_train', θ[idx, :], nn, ps, st) .- y_train) .^ 2)
+	MSE_df[2, :MSE] = mean((nn_forward_(X_train', θ[idx, :], nn, ps, st) .- y_train) .^ 2)
 	MSE_df[2, :RMSE] = sqrt(MSE_df[2, :MSE])
 	MSE_df[3, :State] = "BNN_testing_$(size_of_data_split)"
-	MSE_df[3, :MSE] = mean((nn_forward(X_test', θ[idx, :], nn, ps, st) .- y_test) .^ 2)
+	MSE_df[3, :MSE] = mean((nn_forward_(X_test', θ[idx, :], nn, ps, st) .- y_test) .^ 2)
 	MSE_df[3, :RMSE] = sqrt(MSE_df[3, :MSE])
 	MSE_df[4, :State] = "FNN_training_$(size_of_data_split)"
 	MSE_df[4, :MSE] = mean((FNN_forward(Xs') .- Matrix(ys')) .^ 2)
@@ -678,7 +716,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 
 	CSV.write("results/BNN_MSE_$(size_of_data_split)_$(N).csv", MSE_df)
 
-	θ_BNN_samples, θ_BNN_for_MAP = sample_BNN_parameters(ch, N, size_of_data_split; pseudo_bnn=Dict("init_params" => 0, "flag" => false, "random_params" => 0))
+	θ_BNN_samples, θ_BNN_for_MAP = sample_BNN_parameters(ch, N, size_of_data_split; pseudo_bnn=Dict("init_params" => 0, "flag" => false, "random_params" => 0), bkwd=false)
 
 	CSV.write("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
 
@@ -695,39 +733,6 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS")
 	return ch, θ, nn, ps, st, idx
 end
 
-# ╔═╡ 0158f329-3f09-4a1a-ab2f-f1595212b236
-begin
-	for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-		if i < 0.01
-			percent_ = "half-%" #"$(Int(i*100))%"
-		else
-			percent_ = "$(Int(i*100))%"
-		end
-		one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
-		X_train_one_p = X_train[one_p, :]
-		y_train_one_p = y_train[one_p]
-		samples_one_p_ = USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :][one_p, :]
-		CSV.write("results/USA_MX_$(percent_).csv", DataFrame(samples_one_p_, [:Year, :Age, :Gender, :log_Mu]))
-
-		# 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
-		if i == 0.005
-			N_length = 2_500
-		elseif i == 0.01
-			N_length = 5_000
-		elseif i == 0.05
-			N_length = 7_500
-		elseif i == 0.1
-			N_length = 10_000
-		elseif i > 0.1
-			N_length = 15_000
-		end
-
-		ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
-		#ch_one_p, θ_one_p, nn_one_p, ps_one_p, st_one_p, idx_one_p = BNN_pseudo(X_train_one_p, y_train_one_p, N_length, one_p, percent_, 5; bkwd=false)
-
-	end
-end
-
 # ╔═╡ f79c4cff-9664-40e3-8e6f-ca17fdacc532
 function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=true)
 	half_N = Int(ceil(N/2))
@@ -741,7 +746,7 @@ function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=tru
 		Dense(8 => 1))
 
 	# Initialize the model weights and state
-	ps, st = Lux.setup(rng, nn)
+	ps, st = Lux.setup(Xoshiro(1456789), nn)
 
 	fnn = Chain(
 		Dense(size(Xs)[2] => 8, swish), 
@@ -750,7 +755,7 @@ function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=tru
 		Dense(8 => 8, swish),
 		Dense(8 => 1))
 
-	ps_fnn, st_fnn = Lux.setup(rng, fnn)
+	ps_fnn, st_fnn = Lux.setup(Xoshiro(1456789), fnn)
 
 	opt = Adam(0.03f0)
 
@@ -867,14 +872,14 @@ function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=tru
 	# Save MSE
 	MSE_df = DataFrame(:State => ["", "", "", "", "", "", "", ""], :MSE => zeros(8), :RMSE => zeros(8), :Time_s => zeros(8))
 	MSE_df[1, :State] = "BNN_training_$(size_of_data_split)"
-	MSE_df[1, :MSE] = mean((nn_forward(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
+	MSE_df[1, :MSE] = mean((nn_forward_(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
 	MSE_df[1, :RMSE] = sqrt(MSE_df[1, :MSE])
 	MSE_df[1, :Time_s] = dt_bnn
 	MSE_df[2, :State] = "BNN_full_training_$(size_of_data_split)"
-	MSE_df[2, :MSE] = mean((nn_forward(X_train', θ[idx, :], nn, ps, st) .- y_train) .^ 2)
+	MSE_df[2, :MSE] = mean((nn_forward_(X_train', θ[idx, :], nn, ps, st) .- y_train) .^ 2)
 	MSE_df[2, :RMSE] = sqrt(MSE_df[2, :MSE])
 	MSE_df[3, :State] = "BNN_testing_$(size_of_data_split)"
-	MSE_df[3, :MSE] = mean((nn_forward(X_test', θ[idx, :], nn, ps, st) .- y_test) .^ 2)
+	MSE_df[3, :MSE] = mean((nn_forward_(X_test', θ[idx, :], nn, ps, st) .- y_test) .^ 2)
 	MSE_df[3, :RMSE] = sqrt(MSE_df[3, :MSE])
 	MSE_df[4, :State] = "FNN_training_$(size_of_data_split)"
 	MSE_df[4, :MSE] = mean((FNN_forward(Xs') .- Matrix(ys')) .^ 2)
@@ -915,8 +920,185 @@ function BNN_pseudo(Xs, ys, N, perc, size_of_data_split, random_params; bkwd=tru
 	return ch, θ, nn, ps, st, idx
 end
 
+# ╔═╡ 0775b300-6cff-4dd8-bb87-3f79f2cfef47
+function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=true)
+	# Model structure
+	fnn = Chain(
+		Dense(size(Xs)[2] => 8, swish), 
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 1))
+
+	dev_cpu = cpu_device()
+	dev_gpu = cpu_device() # CPU throughout
+
+	ps_fnn, st_fnn = Lux.setup(Xoshiro(1456789), fnn) |> dev_gpu
+
+	opt = Adam(0.001f0)
+	loss_function = MSELoss()
+	tstate = Training.TrainState(fnn, ps_fnn, st_fnn, opt)
+	vjp_rule = AutoZygote() #AutoEnzyme() #AutoTracker()
+
+	function train_FNN(tstate::Training.TrainState, vjp, data, epochs; loss_func=loss_function)
+		losses = []
+		data = data .|> gpu_device()
+		# Check for early-stopping
+		@inbounds for epoch ∈ 1:epochs
+			_, loss, _, tstate = Training.single_train_step!(vjp, loss_func, data, tstate)
+			push!(losses, loss)
+			if (epoch ≥ 250) && (epoch % 10 == 1) && (losses[epoch] ≥ losses[(epoch-10)])
+				return tstate
+			end
+		end
+	    return tstate
+	end
+
+	FNN_forward(X_, ts_; pars=ts_.parameters) = dev_cpu(Lux.apply(ts_.model, dev_gpu(X_), pars, ts_.states)[1])
+
+	function parameters_to_vectors(nn_param)
+		init_params = zeros(Lux.parameterlength(nn_param))
+		m = 0
+		@inbounds for i ∈ 1:length(nn_param)
+			@inbounds for j in 1:2 # either weights or bias
+				init_params_ = vcat(deepcopy(nn_param[i][j])...)
+				@inbounds for l ∈ 1:length(init_params_)
+					m = m + 1
+					init_params[m] = init_params_[l]
+				end
+			end
+		end
+		return init_params
+	end
+
+	bootstrap_epochs = 800#max(800, Int(floor(size(Xs)[1]*1.2)))
+	
+	bootstrap_samples_train_s = Matrix{Float64}(undef, B, size(Xs)[1])
+	bootstrap_samples_train = Matrix{Float64}(undef, B, size(X_train)[1])
+	bootstrap_samples_test = Matrix{Float64}(undef, B, size(X_test)[1])
+	
+	bootstrap_params = Matrix{Float64}(undef, B, Lux.parameterlength(tstate.parameters))
+	
+	b_size = Int(floor(size(Xs)[1] * b))
+	
+	t_fnn = time()
+	@progress for i ∈ 1:B
+		rng_Xoshiro = Xoshiro(i+100)
+		bootstrap_p = rand(rng_Xoshiro, axes(Xs, 1), b_size)
+		bootstrap_Xs = Xs[bootstrap_p, :]
+		bootstrap_ys = ys[bootstrap_p]
+		ps_fnn, st_fnn = Lux.setup(Xoshiro(1456789-2i), fnn) |> dev_gpu
+		tstate = Training.TrainState(fnn, ps_fnn, st_fnn, opt)
+		tstate_bootstrap = train_FNN(tstate, vjp_rule, (bootstrap_Xs', Matrix(bootstrap_ys')), bootstrap_epochs)
+		bootstrap_samples_train_s[i, :] .= FNN_forward(Xs', tstate_bootstrap)'
+		bootstrap_samples_train[i, :] .= FNN_forward(X_train', tstate_bootstrap)'
+		bootstrap_samples_test[i, :] .= FNN_forward(X_test', tstate_bootstrap)'
+		bootstrap_params[i, :] .= parameters_to_vectors(dev_cpu(tstate_bootstrap.parameters))
+	end
+
+	#bootstrap_params_sample = bootstrap_params[rand(Xoshiro(1456789), axes(bootstrap_params, 1), posterior_samples), :]
+
+	#@inbounds for i ∈ 1:B
+	#	bootstrap_pars = vector_to_parameters_(vec(bootstrap_params[i, :]'), dev_cpu(ps_fnn))
+	#	bootstrap_samples_train_s[i, :] .= FNN_forward(Xs', tstate; pars=bootstrap_pars)'
+	#	bootstrap_samples_train[i, :] .= FNN_forward(X_train', tstate; pars=bootstrap_pars)'
+	#	bootstrap_samples_test[i, :] .= FNN_forward(X_test', tstate; pars=bootstrap_pars)'
+	#end
+	
+	bootstrap_mean_train_s = mean(bootstrap_samples_train_s; dims=1)'
+	bootstrap_var_train_s = var(bootstrap_samples_train_s; dims=1)'
+	bootstrap_mean_train = mean(bootstrap_samples_train; dims=1)'
+	bootstrap_var_train = var(bootstrap_samples_train; dims=1)'
+
+	bootstrap_mean_test = mean(bootstrap_samples_test; dims=1)'
+	bootstrap_var_test = var(bootstrap_samples_test; dims=1)'
+
+	residuals_train_s = max.((ys .- bootstrap_mean_train_s) .^ 2 .- bootstrap_var_train_s, 0)
+
+	fnn_resid = Chain(
+		Dense(size(Xs)[2] => 8, swish), 
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 8, swish),
+		Dense(8 => 1, exp))
+
+	ps_fnn_resid, st_fnn_resid = Lux.setup(Xoshiro(1456789), fnn_resid) |> dev_gpu
+
+	tstate_resid_ = Training.TrainState(fnn_resid, ps_fnn_resid, st_fnn_resid, opt)
+
+	tstate_resid = train_FNN(tstate_resid_, vjp_rule, (Xs', Matrix(residuals_train_s')), bootstrap_epochs)
+
+	dt_fnn = time() - t_fnn
+
+	residual_pred_train = FNN_forward(X_train', tstate_resid)'
+	total_var_train = residual_pred_train .+ bootstrap_var_train
+	y_95_train = bootstrap_mean_train .+ (1.96*sqrt.(total_var_train))
+	y_05_train = bootstrap_mean_train .- (1.96*sqrt.(total_var_train))
+
+	residual_pred_test = FNN_forward(X_test', tstate_resid)'
+	total_var_test = residual_pred_test .+ bootstrap_var_test
+	y_95_test = bootstrap_mean_test .+ (1.96*sqrt.(total_var_test))
+	y_05_test = bootstrap_mean_test .- (1.96*sqrt.(total_var_test))
+
+	RESULTS_TRAIN = DataFrame(USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :], [:Year, :Age, :Gender, :Log_Mu])
+	RESULTS_TEST = DataFrame(USA_MX_matrix[USA_MX_matrix[:, 1] .> 2000, :], [:Year, :Age, :Gender, :Log_Mu])
+
+	RESULTS_TRAIN.lb .= y_05_train
+	RESULTS_TRAIN.mean .= bootstrap_mean_train
+	RESULTS_TRAIN.ub .= y_95_train
+
+	RESULTS_TEST.lb .= y_05_test
+	RESULTS_TEST.mean .= bootstrap_mean_test
+	RESULTS_TEST.ub .= y_95_test
+
+	EXP_RESULTS = DataFrame(
+		:log_mse_train => 0.0,
+		:mse_train => 0.0,
+		:log_mae_train => 0.0,
+		:mae_train => 0.0,
+		:picp_train => 0.0,
+		:log_mwip_train => 0.0,
+		:mwip_train => 0.0,
+		:log_mse_test => 0.0,
+		:mse_test => 0.0,
+		:log_mae_test => 0.0,
+		:mae_test => 0.0,
+		:picp_test => 0.0,
+		:log_mwip_test => 0.0,
+		:mwip_test => 0.0,
+		:train_time => 0.0
+	)
+
+	EXP_RESULTS.log_mse_train .= mean((RESULTS_TRAIN.mean .- RESULTS_TRAIN.Log_Mu) .^ 2)
+	EXP_RESULTS.mse_train .= mean((exp.(RESULTS_TRAIN.mean) .- exp.(RESULTS_TRAIN.Log_Mu)) .^ 2)
+	EXP_RESULTS.log_mae_train .= mean(abs.(RESULTS_TRAIN.mean .- RESULTS_TRAIN.Log_Mu))
+	EXP_RESULTS.mae_train .= mean(abs.(exp.(RESULTS_TRAIN.mean) .- exp.(RESULTS_TRAIN.Log_Mu)))
+	EXP_RESULTS.picp_train .= mean(RESULTS_TRAIN.ub .≥ RESULTS_TRAIN.Log_Mu .≥ RESULTS_TRAIN.lb)
+	EXP_RESULTS.log_mwip_train .= mean(RESULTS_TRAIN.ub .- RESULTS_TRAIN.lb)
+	EXP_RESULTS.mwip_train .= mean(exp.(RESULTS_TRAIN.ub) .- exp.(RESULTS_TRAIN.lb))
+	
+	EXP_RESULTS.log_mse_test .= mean((RESULTS_TEST.mean .- RESULTS_TEST.Log_Mu) .^ 2)
+	EXP_RESULTS.mse_test .= mean((exp.(RESULTS_TEST.mean) .- exp.(RESULTS_TEST.Log_Mu)) .^ 2)
+	EXP_RESULTS.log_mae_test .= mean(abs.(RESULTS_TEST.mean .- RESULTS_TEST.Log_Mu))
+	EXP_RESULTS.mae_test .= mean(abs.(exp.(RESULTS_TEST.mean) .- exp.(RESULTS_TEST.Log_Mu)))
+	EXP_RESULTS.picp_test .= mean(RESULTS_TEST.ub .≥ RESULTS_TEST.Log_Mu .≥ RESULTS_TEST.lb)
+	EXP_RESULTS.log_mwip_test .= mean(RESULTS_TEST.ub .- RESULTS_TEST.lb)
+	EXP_RESULTS.mwip_test .= mean(exp.(RESULTS_TEST.ub) .- exp.(RESULTS_TEST.lb))
+
+	EXP_RESULTS.train_time .= dt_fnn
+
+	if save == true
+		CSV.write("results/FNN_bootrap_params_$(percent_s)_$(B).csv", DataFrame(bootstrap_params, :auto))
+		CSV.write("results/FNN_PI_TRAIN_$(percent_s)_$(B).csv", RESULTS_TRAIN)
+		CSV.write("results/FNN_PI_TEST_$(percent_s)_$(B).csv", RESULTS_TEST)
+		CSV.write("results/FNN_PI_RESULTS_$(percent_s)_$(B).csv", EXP_RESULTS)
+	end
+	
+	return bootstrap_samples_train, bootstrap_samples_test
+end
+
 # ╔═╡ a28f7cbe-a6ff-4d4b-b327-481c0e81f38d
-function get_preds(op, size_of_data_split, N, train_test)
+function get_preds(size_of_data_split, N, train_test)
 	
 	nn = Chain(
 		Dense(size(X_train)[2] => 8, swish), 
@@ -930,7 +1112,7 @@ function get_preds(op, size_of_data_split, N, train_test)
 	if train_test == "train"
 		X_test_ = deepcopy(X_train)
 		samples_one_p = USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :]
-	else
+	elseif train_test == "test"
 		X_test_ = deepcopy(X_test)
 		samples_one_p = USA_MX_matrix[USA_MX_matrix[:, 1] .> 2000, :]
 	end
@@ -938,18 +1120,19 @@ function get_preds(op, size_of_data_split, N, train_test)
 	sample_N = 10_000
 	nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
 	θ_samples = Matrix(DataFrame(CSV.File("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv")))
+	σ_MAP = 0.04
 
 	# BNN samples
 	for i ∈ 1:sample_N
-		nn_pred_y = nn_forward(X_test_', θ_samples[i, :], nn, ps, st)
+		nn_pred_y = nn_forward(X_test_', θ_samples[i, :], nn, ps, st, σ_MAP; offset=i)
 		nn_pred_samples[i, :] .= nn_pred_y
 	end
 
 	nn_pred_mean = mean(nn_pred_samples; dims=1)'
 	nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
 	nn_pred_l01 = quantile.(eachcol(nn_pred_samples), 0.01)
-	nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
-	nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
+	nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.025)
+	nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.975)
 	nn_pred_u99 = quantile.(eachcol(nn_pred_samples), 0.99)
 	nn_pred_sdev = std(nn_pred_samples; dims=1)'
 
@@ -964,26 +1147,120 @@ function get_preds(op, size_of_data_split, N, train_test)
 	RESULTS.BNN_u95 .= nn_pred_u95
 	RESULTS.BNN_u99 .= nn_pred_u99
 	RESULTS.BNN_sdev .= nn_pred_sdev
-	#RESULTS.FNN .= fnn_pred
+
+	EXP_RESULTS = DataFrame(
+		:MSE_mean => 0.0, 
+		:MSE_median => 0.0, 
+		:MAE_mean => 0.0, 
+		:MAE_median => 0.0, 
+		:PICP => 0.0, 
+		:MIPW => 0.0,
+		:MSE_korn_mean => 0.0, 
+		:MSE_korn_median => 0.0, 
+		:MAE_korn_mean => 0.0, 
+		:MAE_korn_median => 0.0, 
+		:PICP_korn => 0.0, 
+		:MIPW_korn  => 0.0,
+		:MSE_korn_full_mean => 0.0, 
+		:MSE_korn_full_median => 0.0, 
+		:MAE_korn_full_mean => 0.0, 
+		:MAE_korn_full_median => 0.0, 
+		:PICP_korn_full => 0.0, 
+		:MIPW_korn_full  => 0.0,
+		:MSE_perla_mean => 0.0, 
+		:MSE_perla_median => 0.0, 
+		:MAE_perla_mean => 0.0, 
+		:MAE_perla_median => 0.0, 
+		:PICP_perla => 0.0, 
+		:MIPW_perla  => 0.0,
+		:MSE_nigri_mean => 0.0, 
+		:MSE_nigri_median => 0.0, 
+		:MAE_nigri_mean => 0.0, 
+		:MAE_nigri_median => 0.0, 
+		:PICP_nigri => 0.0, 
+		:MIPW_nigri  => 0.0,
+	)
+	if train_test == "test"
+		RESULTS_korn = RESULTS[(60 .≤ RESULTS.Age .≤ 89) .&& (2007 .≤ RESULTS.Year .≤ 2016), :]
+		RESULTS_korn_full = RESULTS[(2 .≤ RESULTS.Age .≤ 98) .&& (2007 .≤ RESULTS.Year .≤ 2016), :]
+	else
+		RESULTS_korn = RESULTS[(60 .≤ RESULTS.Age .≤ 89) .&& (RESULTS.Year .≤ 2006), :]
+		RESULTS_korn_full = RESULTS[(2 .≤ RESULTS.Age .≤ 98) .&& (RESULTS.Year .≤ 2006), :]
+	end
+	
+	RESULTS_perla = RESULTS[(RESULTS.Age .≤ 99) .&& (RESULTS.Year .≤ 2016), :]
+	RESULTS_nigri = RESULTS[(RESULTS.Year .≤ 2015), :]
+
+
+	EXP_RESULTS.MSE_mean .= mean((exp.(RESULTS.Log_Mu) .- exp.(RESULTS.BNN_mean)) .^ 2)
+	EXP_RESULTS.MSE_median .= mean((exp.(RESULTS.Log_Mu) .- exp.(RESULTS.BNN_median)) .^ 2)
+	EXP_RESULTS.MAE_mean .= mean(abs.(exp.(RESULTS.Log_Mu) .- exp.(RESULTS.BNN_mean)))
+	EXP_RESULTS.MAE_median .= mean(abs.(exp.(RESULTS.Log_Mu) .- exp.(RESULTS.BNN_median)))
+	EXP_RESULTS.MIPW .= mean(exp.(RESULTS.BNN_u95) .- exp.(RESULTS.BNN_l05))
+	EXP_RESULTS.PICP .= mean(exp.(RESULTS.BNN_u95) .≥ exp.(RESULTS.Log_Mu) .≥ exp.(RESULTS.BNN_l05))
+	# Korn et al.
+	EXP_RESULTS.MSE_korn_mean .= mean((exp.(RESULTS_korn.Log_Mu) .- exp.(RESULTS_korn.BNN_mean)) .^ 2)
+	EXP_RESULTS.MSE_korn_median .= mean((exp.(RESULTS_korn.Log_Mu) .- exp.(RESULTS_korn.BNN_median)) .^ 2)
+	EXP_RESULTS.MAE_korn_mean .= mean(abs.(exp.(RESULTS_korn.Log_Mu) .- exp.(RESULTS_korn.BNN_mean)))
+	EXP_RESULTS.MAE_korn_median .= mean(abs.(exp.(RESULTS_korn.Log_Mu) .- exp.(RESULTS_korn.BNN_median)))
+	EXP_RESULTS.MIPW_korn .= mean(exp.(RESULTS_korn.BNN_u95) .- exp.(RESULTS_korn.BNN_l05))
+	EXP_RESULTS.PICP_korn .= mean(exp.(RESULTS_korn.BNN_u95) .≥ exp.(RESULTS_korn.Log_Mu) .≥ exp.(RESULTS_korn.BNN_l05))
+	# Korn et al. full age range
+	EXP_RESULTS.MSE_korn_full_mean .= mean((exp.(RESULTS_korn_full.Log_Mu) .- exp.(RESULTS_korn_full.BNN_mean)) .^ 2)
+	EXP_RESULTS.MSE_korn_full_median .= mean((exp.(RESULTS_korn_full.Log_Mu) .- exp.(RESULTS_korn_full.BNN_median)) .^ 2)
+	EXP_RESULTS.MAE_korn_full_mean .= mean(abs.(exp.(RESULTS_korn_full.Log_Mu) .- exp.(RESULTS_korn_full.BNN_mean)))
+	EXP_RESULTS.MAE_korn_full_median .= mean(abs.(exp.(RESULTS_korn_full.Log_Mu) .- exp.(RESULTS_korn_full.BNN_median)))
+	EXP_RESULTS.MIPW_korn_full .= mean(exp.(RESULTS_korn_full.BNN_u95) .- exp.(RESULTS_korn_full.BNN_l05))
+	EXP_RESULTS.PICP_korn_full .= mean(exp.(RESULTS_korn_full.BNN_u95) .≥ exp.(RESULTS_korn_full.Log_Mu) .≥ exp.(RESULTS_korn_full.BNN_l05))
+	# Perla et al.
+	EXP_RESULTS.MSE_perla_mean .= mean((exp.(RESULTS_perla.Log_Mu) .- exp.(RESULTS_perla.BNN_mean)) .^ 2)
+	EXP_RESULTS.MSE_perla_median .= mean((exp.(RESULTS_perla.Log_Mu) .- exp.(RESULTS_perla.BNN_median)) .^ 2)
+	EXP_RESULTS.MAE_perla_mean .= mean(abs.(exp.(RESULTS_perla.Log_Mu) .- exp.(RESULTS_perla.BNN_mean)))
+	EXP_RESULTS.MAE_perla_median .= mean(abs.(exp.(RESULTS_perla.Log_Mu) .- exp.(RESULTS_perla.BNN_median)))
+	EXP_RESULTS.MIPW_perla .= mean(exp.(RESULTS_perla.BNN_u95) .- exp.(RESULTS_perla.BNN_l05))
+	EXP_RESULTS.PICP_perla .= mean(exp.(RESULTS_perla.BNN_u95) .≥ exp.(RESULTS_perla.Log_Mu) .≥ exp.(RESULTS_perla.BNN_l05))
+	# Nigri et al.
+	EXP_RESULTS.MSE_nigri_mean .= mean(((RESULTS_nigri.Log_Mu) .- (RESULTS_nigri.BNN_mean)) .^ 2)
+	EXP_RESULTS.MSE_nigri_median .= mean(((RESULTS_nigri.Log_Mu) .- (RESULTS_nigri.BNN_median)) .^ 2)
+	EXP_RESULTS.MAE_nigri_mean .= mean(abs.((RESULTS_nigri.Log_Mu) .- (RESULTS_nigri.BNN_mean)))
+	EXP_RESULTS.MAE_nigri_median .= mean(abs.((RESULTS_nigri.Log_Mu) .- (RESULTS_nigri.BNN_median)))
+	EXP_RESULTS.MIPW_nigri .= mean((RESULTS_nigri.BNN_u95) .- (RESULTS_nigri.BNN_l05))
+	EXP_RESULTS.PICP_nigri .= mean((RESULTS_nigri.BNN_u95) .≥ (RESULTS_nigri.Log_Mu) .≥ (RESULTS_nigri.BNN_l05))
 
 	CSV.write("results/BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", RESULTS)
+	CSV.write("results/EXP_BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", EXP_RESULTS)
 end
 
 # ╔═╡ 9643784e-6dcb-40e5-b3f7-1f75bb43903f
-for i ∈ [0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-	percent_ = "$(Int(i*100))%"
-	one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
-	
-	if i < 0.1
-		N_length = 5_000
-	elseif i < 0.5
-		N_length = 7_500
-	else
-		N_length = 12_500
+begin
+	for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+		if i < 0.01
+			percent_ = "half-p"
+		else
+			percent_ = "$(Int(i*100))"
+		end
+		bp = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
+		X_train_b = X_train[bp, :]
+		y_train_b = y_train[bp]
+		
+		# 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
+		if i == 0.005
+			N_length = 2_500
+		elseif i == 0.01
+			N_length = 5_000
+		elseif i == 0.05
+			N_length = 7_500
+		elseif i == 0.1
+			N_length = 10_000
+		elseif i > 0.1
+			N_length = 15_000
+		else
+			N_length = 100 # Debugging
+		end
+		fnn_prediction_interval(X_train_b, y_train_b, percent_; B=N_length)
+		#get_preds(one_p, percent_, N_length, "train")
+		#get_preds(percent_, N_length, "test")
 	end
-	
-	#get_preds(one_p, percent_, N_length, "train")
-	#get_preds(one_p, percent_, N_length, "test")
 end
 
 # ╔═╡ Cell order:
@@ -1030,5 +1307,6 @@ end
 # ╠═d1208799-3cf9-4f26-8a4a-b88ae2a03108
 # ╠═0e8cc4c5-2ad2-493d-94e1-e312518d6ddd
 # ╠═e00a61f5-b488-48c2-a3b5-79f6f1f44081
+# ╠═0775b300-6cff-4dd8-bb87-3f79f2cfef47
 # ╠═a28f7cbe-a6ff-4d4b-b327-481c0e81f38d
 # ╠═9643784e-6dcb-40e5-b3f7-1f75bb43903f
