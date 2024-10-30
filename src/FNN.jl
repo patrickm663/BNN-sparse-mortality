@@ -1,6 +1,8 @@
 include("load_data.jl")
 
-using Lux, Optimisers, Zygote, Random, LinearAlgebra, ComponentArrays, Distributions
+using Lux, Optimisers, Zygote, ComponentArrays
+using Random, LinearAlgebra, Distributions
+using ProgressLogging
 
 function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=false)
   # Model structure
