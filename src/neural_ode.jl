@@ -11,22 +11,22 @@ using Random, Plots, AdvancedHMC, MCMCChains, StatsPlots, ComponentArrays
 
 include("lee_carter.jl")
 
-#kappa_std = (std(kappa_males), std(kappa_females))
-#kappa_males = kappa_males[1:end] ./ kappa_std[1]
-#kappa_females = kappa_females[1:end] ./ kappa_std[2]
+tsteps = [1, 7, 15, 16, 22, 38, 48, 51]
+X_train_square_log_males = X_train_square_log_males[1:1:end, tsteps] 
 
-X_train_square_log_males = X_train_square_log_males[1:10:end, [1, 7, 15, 16, 22, 38, 48, 51]]
-
-u0 = Array(X_train_square_log_males[:, 1]) #[kappa_males[1]; kappa_females[1]]
-datasize = 51#size(X_train_square_log_males)[2]#length(kappa_males)
+u0 = Array(X_train_square_log_males[:, 1]) 
+datasize = 51
 tspan = (0.0, (datasize-1) |> f64)
-tsteps = [1, 7, 15, 16, 22, 38, 48, 51] .- 1.0f0
+tsteps = tsteps .- 1.0f0
 long_tsteps = range(tspan[1], 80.0, length = Int(2*(80.0-tspan[1]+1)))
 long_tspan = (0.0, long_tsteps[end] |> f64)
-#ode_data = Array(hcat(kappa_males, kappa_females)')
 ode_data = Array(X_train_square_log_males)
 
-dudt2 = Lux.Chain(Lux.Dense(size(ode_data)[1], 64, tanh), Dense(64 => 64, tanh), Lux.Dense(64, size(ode_data)[1]))
+dudt2 = Lux.Chain(
+		  Lux.Dense(size(ode_data)[1], 8, tanh), 
+		  Dense(8 => 8, tanh), 
+		  Lux.Dense(8, size(ode_data)[1])
+	)
 
 rng = Random.default_rng()
 p, st = Lux.setup(rng, dudt2)
@@ -75,9 +75,9 @@ h = Hamiltonian(metric, l, dldθ)
 
 integrator = Leapfrog(find_good_stepsize(h, p))
 kernel = HMCKernel(Trajectory{MultinomialTS}(integrator, GeneralisedNoUTurn()))
-adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(0.9, integrator))
-N_samples = 1_000
-samples, stats = sample(h, kernel, p, N_samples, adaptor, N_samples; progress = true)
+adaptor = StanHMCAdaptor(MassMatrixAdaptor(metric), StepSizeAdaptor(0.45, integrator))
+N_samples = 50
+samples, stats = sample(h, kernel, p, N_samples, adaptor, 100; progress = true)
 
 samples = hcat(samples...)
 samples_reduced = samples[1:5, :]
@@ -91,7 +91,7 @@ pl1 = scatter(tsteps .+ 1950.0, ode_data[1, :], color = :red, label = "Data: Age
              title = "BNN: Mortality")
 scatter!(tsteps .+ 1950.0, ode_data[2, :], color = :blue, label = "Data: Age 1")
 for k in 1:500
-    resol = forecast_neuralode(samples[:, 100:end][:, rand(1:(N_samples-100))])
+    resol = forecast_neuralode(samples[:, 10:end][:, rand(1:(N_samples-10))])
     plot!(long_tsteps .+ 1950.0, resol[1, :], alpha = 0.04, color = :red, label = "")
     plot!(long_tsteps .+ 1950.0, resol[2, :], alpha = 0.04, color = :blue, label = "")
 end
