@@ -379,7 +379,7 @@ begin
     else
       percent_ = "$(Int(i*100))%"
     end # 1456789
-    one_p = rand(Xoshiro(19), Bernoulli(i), size(X_train)[1])
+    one_p = rand(Xoshiro(1145689), Bernoulli(i), size(X_train)[1])
     X_train_one_p = X_train[one_p, :]
     y_train_one_p = y_train[one_p]
     samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][one_p, :]
