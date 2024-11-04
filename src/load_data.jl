@@ -68,7 +68,7 @@ function load_data(file_path, train_start_year, train_end_year, test_start_year,
   X_test_square_log_males = Matrix(MX_square_log_males[:, (test_start_year:test_end_year) .- (year_range[1] - 1)])
   X_test_square_log_females = Matrix(MX_square_log_females[:, (test_start_year:test_end_year) .- (year_range[1] - 1)])
 
-  return X_train, y_train, X_train_square_log_males, X_train_square_log_females, X_test, y_test, X_test_square_log_males, X_test_square_log_females, MX_matrix 
+  return X_train, y_train, X_train_square_log_males, X_train_square_log_females, X_test, y_test, X_test_square_log_males, X_test_square_log_females, MX_matrix, year_mu, year_sigma
 end
 
 # Set data bounds 
@@ -80,4 +80,4 @@ start_age = 0
 end_age = 100
 
 #Load the full USA mortality dataset, capping the age range at 100 and year range at 1950.
-X_train, y_train, X_train_square_log_males, X_train_square_log_females, X_test, y_test, X_test_square_log_males, X_test_square_log_females, MX_matrix = load_data("data/USA_Mx_1x1.csv", 1950, 2000, 2001, 2016, 0, 100);
+X_train, y_train, X_train_square_log_males, X_train_square_log_females, X_test, y_test, X_test_square_log_males, X_test_square_log_females, MX_matrix, year_mu, year_sigma = load_data("data/USA_Mx_1x1.csv", 1950, 2000, 2001, 2016, 0, 100);

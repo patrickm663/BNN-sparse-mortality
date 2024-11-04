@@ -4,7 +4,7 @@ using Lux, Optimisers, Zygote, ComponentArrays
 using Random, LinearAlgebra, Distributions
 using ProgressLogging
 
-function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=false)
+function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=true)
   # Model structure
   fnn = Chain(
 	      Dense(size(Xs)[2] => 8, swish), 
@@ -116,8 +116,8 @@ function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=false)
   y_95_test = bootstrap_mean_test .+ (1.96*sqrt.(total_var_test))
   y_05_test = bootstrap_mean_test .- (1.96*sqrt.(total_var_test))
 
-  RESULTS_TRAIN = DataFrame(USA_MX_matrix[USA_MX_matrix[:, 1] .≤ 2000, :], [:Year, :Age, :Gender, :Log_Mu])
-  RESULTS_TEST = DataFrame(USA_MX_matrix[USA_MX_matrix[:, 1] .> 2000, :], [:Year, :Age, :Gender, :Log_Mu])
+  RESULTS_TRAIN = DataFrame(MX_matrix[MX_matrix[:, 1] .≤ 2000, :], [:Year, :Age, :Gender, :Log_Mu])
+  RESULTS_TEST = DataFrame(MX_matrix[MX_matrix[:, 1] .> 2000, :], [:Year, :Age, :Gender, :Log_Mu])
 
   RESULTS_TRAIN.lb .= y_05_train
   RESULTS_TRAIN.mean .= bootstrap_mean_train
@@ -164,26 +164,27 @@ function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=false)
   EXP_RESULTS.train_time .= dt_fnn
 
   if save == true
-    CSV.write("../results/FNN_bootrap_params_$(percent_s)_$(B).csv", DataFrame(bootstrap_params, :auto))
-    CSV.write("../results/FNN_PI_TRAIN_$(percent_s)_$(B).csv", RESULTS_TRAIN)
-    CSV.write("../results/FNN_PI_TEST_$(percent_s)_$(B).csv", RESULTS_TEST)
-    CSV.write("../results/FNN_PI_RESULTS_$(percent_s)_$(B).csv", EXP_RESULTS)
+    CSV.write("results/FNN_bootrap_params_$(percent_s)_$(B).csv", DataFrame(bootstrap_params, :auto))
+    CSV.write("results/FNN_PI_TRAIN_$(percent_s)_$(B).csv", RESULTS_TRAIN)
+    CSV.write("results/FNN_PI_TEST_$(percent_s)_$(B).csv", RESULTS_TEST)
+    CSV.write("results/FNN_PI_RESULTS_$(percent_s)_$(B).csv", EXP_RESULTS)
   end
 
   return bootstrap_samples_train, bootstrap_samples_test
 end
 
-for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+for i ∈ [0.005]#, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
   if i < 0.01
     percent_ = "half-p"
   else
     percent_ = "$(Int(i*100))"
-  end
+  end # 1456789
   bp = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
   X_train_b = X_train[bp, :]
   y_train_b = y_train[bp]
 
   # 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
+i = 0.0
   if i == 0.005
     N_length = 2_500
   elseif i == 0.01
@@ -195,7 +196,7 @@ for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
   elseif i > 0.1
     N_length = 15_000
   else
-    N_length = 100 # Debugging
+    N_length = 1 # Debugging
   end
   fnn_prediction_interval(X_train_b, y_train_b, percent_; B=N_length)
 end

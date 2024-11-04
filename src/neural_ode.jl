@@ -12,7 +12,7 @@ using Random, Plots, AdvancedHMC, MCMCChains, StatsPlots, ComponentArrays
 include("lee_carter.jl")
 
 tsteps = [1, 7, 15, 16, 22, 38, 48, 51]
-X_train_square_log_males = X_train_square_log_males[1:1:end, tsteps] 
+X_train_square_log_males = X_train_square_log_males[1:5:end, tsteps] 
 
 u0 = Array(X_train_square_log_males[:, 1]) 
 datasize = 51
@@ -30,7 +30,7 @@ dudt2 = Lux.Chain(
 
 rng = Random.default_rng()
 p, st = Lux.setup(rng, dudt2)
-_st = st
+const _st = st
 function neuralodefunc(u, p, t)
     dudt2(u, p, _st)[1]
 end
@@ -45,7 +45,7 @@ function forecast_prob_neuralode(u0, p)
 end
 
 p = ComponentArray{Float64}(p)
-_p = p
+const _p = p
 
 function predict_neuralode(p)
     p = p isa ComponentArray ? p : convert(typeof(_p), p)

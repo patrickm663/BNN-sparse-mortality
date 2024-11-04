@@ -1,6 +1,5 @@
 include("load_data.jl")
 
-
 using Lux, Tracker, Optimisers, Functors, DataFrames, Plots, StatsPlots
 using Turing, Distributions, ProgressLogging
 using Random, LinearAlgebra, ComponentArrays
@@ -38,46 +37,7 @@ function nn_forward(x, θ, nn, ps, st, σ_MAP; offset=0)
   return nn_output .+ rand(Xoshiro(1456789+offset), Normal(0.0, σ_MAP))
 end
 
-
-begin
-  for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-    if i < 0.01
-      percent_ = "half-%"
-    else
-      percent_ = "$(Int(i*100))%"
-    end
-    one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
-    X_train_one_p = X_train[one_p, :]
-    y_train_one_p = y_train[one_p]
-    samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][one_p, :]
-
-    # 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
-    if i == 0.005
-      N_length = 2_500
-    elseif i == 0.01
-      N_length = 5_000
-    elseif i == 0.05
-      N_length = 7_500
-    elseif i == 0.1
-      N_length = 10_000
-    elseif i > 0.1
-      N_length = 15_000
-    end
-
-    ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
-    get_preds(percent_, N_length, "train")
-    get_preds(percent_, N_length, "test")
-  end
-
-  for i ∈ 1950:10:2021
-    for j ∈ 0:1
-      age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
-    end
-  end
-
-end
-
-function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", save=false)
+function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", save=true)
   half_N = Int(ceil(N/2))
 
   # Construct a neural network using Lux
@@ -169,7 +129,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   θ = MCMCChains.group(ch, :parameters).value
 
   # Save MSE
-  MSE_df = DataFrame(:State => ["", "", ""] :MSE => zeros(3), :RMSE => zeros(3), :Time_s => zeros(3))
+  MSE_df = DataFrame(:State => ["", "", ""], :MSE => zeros(3), :RMSE => zeros(3), :Time_s => zeros(3))
   MSE_df[1, :State] = "BNN_training_$(size_of_data_split)"
   MSE_df[1, :MSE] = mean((nn_forward_(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
   MSE_df[1, :RMSE] = sqrt(MSE_df[1, :MSE])
@@ -184,15 +144,15 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
 
   θ_BNN_samples, θ_BNN_for_MAP = sample_BNN_parameters(ch, N, size_of_data_split)
 
-  pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TRAIN", θ_BNN_samples, θ_BNN_for_MAP)
-  pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
+  #pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TRAIN", θ_BNN_samples, θ_BNN_for_MAP)
+  #pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
 
   if save == true
-    CSV.write("../results/full_chains_$(size_of_data_split)_$(N).csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
-    CSV.write("../results/summary_chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
-    savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "../results/chains_plot_$(size_of_data_split)_$(N).png")
-    CSV.write("../results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
-    CSV.write("../results/BNN_MAP_RESULTS_$(size_of_data_split)_$(N).csv", MSE_df)
+    CSV.write("results/full_chains_$(size_of_data_split)_$(N).csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
+    CSV.write("results/summary_chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
+    savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "results/chains_plot_$(size_of_data_split)_$(N).png")
+    CSV.write("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
+    CSV.write("results/BNN_MAP_RESULTS_$(size_of_data_split)_$(N).csv", MSE_df)
   end
 
   return ch, θ, nn, ps, st, idx, θ_BNN_samples, θ_BNN_for_MAP
@@ -208,7 +168,7 @@ function sample_BNN_parameters(ch, N, size_of_data_split)
   return θ_samples, θ_for_MAP
 end
 
-function get_preds(size_of_data_split, N, train_test; save=false)
+function get_preds(size_of_data_split, N, train_test; save=true)
 
   nn = Chain(
 	     Dense(size(X_train)[2] => 8, swish), 
@@ -217,7 +177,7 @@ function get_preds(size_of_data_split, N, train_test; save=false)
 	     Dense(8 => 8, swish),
 	     Dense(8 => 1))
 
-  ps, st = Lux.setup(rng, nn)
+  ps, st = Lux.setup(Xoshiro(321), nn)
 
   if train_test == "train"
     X_test_ = deepcopy(X_train)
@@ -229,7 +189,7 @@ function get_preds(size_of_data_split, N, train_test; save=false)
 
   sample_N = 10_000
   nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
-  θ_samples = Matrix(DataFrame(CSV.File("../results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv")))
+  θ_samples = Matrix(DataFrame(CSV.File("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv")))
   σ_MAP = 0.04
 
   # BNN samples
@@ -247,9 +207,7 @@ function get_preds(size_of_data_split, N, train_test; save=false)
   nn_pred_sdev = std(nn_pred_samples; dims=1)'
 
   RESULTS = DataFrame(samples_one_p, [:Year, :Age, :Gender, :Log_Mu])
-  if train_test == "train"
-    RESULTS.In_sample .= Int.(op)
-  end
+
   RESULTS.BNN_l01 .= nn_pred_l01
   RESULTS.BNN_l05 .= nn_pred_l05
   RESULTS.BNN_mean .= nn_pred_mean
@@ -338,8 +296,8 @@ function get_preds(size_of_data_split, N, train_test; save=false)
   EXP_RESULTS.PICP_nigri .= mean((RESULTS_nigri.BNN_u95) .≥ (RESULTS_nigri.Log_Mu) .≥ (RESULTS_nigri.BNN_l05))
 
   if save == true
-    CSV.write("../results/BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", RESULTS)
-    CSV.write("../results/EXP_BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", EXP_RESULTS)
+    CSV.write("results/BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", RESULTS)
+    CSV.write("results/EXP_BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", EXP_RESULTS)
   end
 end
 
@@ -362,7 +320,7 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
     nn_pred_samples[i, :] .= nn_pred_y
   end
 
-  nn_pred_mean = mean(nn_pred_samples; dims=1)'
+  nn_pred_mean = vcat(mean(nn_pred_samples; dims=1)'...)
   nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
   nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
   nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
@@ -388,6 +346,9 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
     # Plot BNN mean
     plot!(0:100, nn_pred_mean, label="BNN: Mean", color=:blue, width=2)
 
+    # Plot BNN CI
+    plot!(0:100, nn_pred_l05, fillrange=nn_pred_u95, label="BNN: 95% CI", color=:blue, width=0.1, alpha=0.3)
+
     # Plot BNN median
     plot!(0:100, nn_pred_median, label="BNN: Median", color=:blue, width=2, style=:dashdot)
 
@@ -406,7 +367,47 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
   p_
 
-  savefig(p_, "../results/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN.png")
+  savefig(p_, "results/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN.png")
 
   return p_
+end
+
+begin
+  for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+    if i < 0.01
+      percent_ = "half-%"
+    else
+      percent_ = "$(Int(i*100))%"
+    end # 1456789
+    one_p = rand(Xoshiro(19), Bernoulli(i), size(X_train)[1])
+    X_train_one_p = X_train[one_p, :]
+    y_train_one_p = y_train[one_p]
+    samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][one_p, :]
+
+    # 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
+    if i == 0.005
+      N_length = 2_500
+    elseif i == 0.01
+      N_length = 5_000
+    elseif i == 0.05
+      N_length = 7_500
+    elseif i == 0.1
+      N_length = 10_000
+    elseif i > 0.1
+      N_length = 15_000
+    end
+
+    #N_length=100
+
+    ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_; save=true)
+    _ = get_preds(percent_, N_length, "train"; save=true)
+    _ = get_preds(percent_, N_length, "test"; save=true)
+
+    for i ∈ 1950:10:2016
+      for j ∈ 0:1
+        age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
+      end
+    end
+  end
+
 end
