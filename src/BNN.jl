@@ -373,8 +373,9 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 end
 
 begin
-  for i ∈ [0.005] #Debugging #, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-    if i < 0.01
+  #for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+  for i ∈ [0.005] # Debug
+  if i < 0.01
       percent_ = "half-%"
     else
       percent_ = "$(Int(i*100))%"

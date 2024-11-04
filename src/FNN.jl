@@ -173,7 +173,8 @@ function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=true)
   return bootstrap_samples_train, bootstrap_samples_test
 end
 
-for i ∈ [0.005]#, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+#for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+for i ∈ [0.005] # Debug
   if i < 0.01
     percent_ = "half-p"
   else
