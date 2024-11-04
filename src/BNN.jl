@@ -401,7 +401,6 @@ begin
       N_length = 100
     end
 
-    #N_length=100
 
     ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_; save=true)
     _ = get_preds(percent_, N_length, "train"; save=true)
