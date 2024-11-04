@@ -385,6 +385,7 @@ begin
     samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][one_p, :]
 
     # 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
+    i = 0
     if i == 0.005
       N_length = 2_500
     elseif i == 0.01
@@ -395,6 +396,8 @@ begin
       N_length = 10_000
     elseif i > 0.1
       N_length = 15_000
+    else # Debugging
+      N_length = 100
     end
 
     #N_length=100
