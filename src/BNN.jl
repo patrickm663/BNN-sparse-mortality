@@ -175,8 +175,8 @@ function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_spl
 
   nn_pred_mean = mean(nn_pred_samples; dims=1)'
   nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
-  nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
-  nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
+  nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.025)
+  nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.975)
   nn_pred_MAP =  nn_forward(X_', θ_for_MAP[idx, :], nn, ps, st, σ_MAP)
 
   # Apply PICP and MPIW
