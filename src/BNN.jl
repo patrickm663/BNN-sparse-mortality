@@ -151,11 +151,11 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   #pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
 
   if save == true
-    CSV.write("../results/full_chains_$(size_of_data_split)_$(N).csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
-    CSV.write("../results/summary_chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
+    CSV.write("results/full_chains_$(size_of_data_split)_$(N).csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
+    CSV.write("results/summary_chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
     savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "../results/chains_plot_$(size_of_data_split)_$(N).png")
-    CSV.write("../results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
-    CSV.write("../results/BNN_MAP_RESULTS_$(size_of_data_split)_$(N).csv", MSE_df)
+    CSV.write("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
+    CSV.write("results/BNN_MAP_RESULTS_$(size_of_data_split)_$(N).csv", MSE_df)
   end
 
   return ch, θ, nn, ps, st, idx, θ_BNN_samples, θ_BNN_for_MAP
@@ -219,7 +219,7 @@ function sample_BNN_parameters(ch, N, size_of_data_split)
   return θ_samples, θ_for_MAP
 end
 
-function get_preds(size_of_data_split, N, train_test; save=false)
+function get_preds(size_of_data_split, N, train_test; save=true)
 
   nn = Chain(
 	     Dense(size(X_train)[2] => 8, swish), 
@@ -240,7 +240,7 @@ function get_preds(size_of_data_split, N, train_test; save=false)
 
   sample_N = 10_000
   nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
-  θ_samples = Matrix(DataFrame(CSV.File("../results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv")))
+  θ_samples = Matrix(DataFrame(CSV.File("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv")))
   σ_MAP = 0.04
 
   # BNN samples
@@ -349,8 +349,8 @@ function get_preds(size_of_data_split, N, train_test; save=false)
   EXP_RESULTS.PICP_nigri .= mean((RESULTS_nigri.BNN_u95) .≥ (RESULTS_nigri.Log_Mu) .≥ (RESULTS_nigri.BNN_l05))
 
   if save == true
-    CSV.write("../results/BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", RESULTS)
-    CSV.write("../results/EXP_BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", EXP_RESULTS)
+    CSV.write("results/BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", RESULTS)
+    CSV.write("results/EXP_BNN_results_$(size_of_data_split)_$(N)_$(train_test).csv", EXP_RESULTS)
   end
 end
 
@@ -417,7 +417,7 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
   p_
 
-  savefig(p_, "../results/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN.png")
+  savefig(p_, "results/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN.png")
 
   return p_
 end
