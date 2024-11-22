@@ -40,7 +40,7 @@ end
 
 
 
-function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", save=false)
+function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", save=true)
   half_N = Int(ceil(N/2))
 
   # Construct a neural network using Lux
