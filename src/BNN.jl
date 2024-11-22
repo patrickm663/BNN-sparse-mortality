@@ -354,10 +354,14 @@ end
 function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N, θ_samples, θ_for_MAP)
   age_set = Array(0:0.5:100)
   X_test_ = [repeat([(year - year_mu) / year_sigma], length(age_set))'; ((age_set .- age_mu) ./ age_sigma)'; repeat([gender], length(age_set))']'
+
   if year ≤ 2000
     samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][perc, :]
-    samples_one_p = samples_one_p[(samples_one_p[:, 1] .== year) .&& (samples_one_p[:, 3] .== gender), :]
+  else
+    samples_one_p = MX_matrix[MX_matrix[:, 1] .> 2000, :][perc, :]
   end
+  
+  samples_one_p = samples_one_p[(samples_one_p[:, 1] .== year) .&& (samples_one_p[:, 3] .== gender), :]
 
   sample_N = max(N, 10_000)
   nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
@@ -406,6 +410,8 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
     # Plot Observations
     if year ≤ 2000
       scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Observed Samples")
+    else
+      scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Unseen Samples")
     end
 
     #scatter!(0:100, MX_matrix[(MX_matrix[:, 1] .== year) .&& (MX_matrix[:, 3] .== gender), 4], label="Full Underlying Data", color=:black, markershape=:circle, markersize=1.5, ylim=(-10.0, -0.5))
