@@ -35,6 +35,8 @@ function load_data(file_path, train_start_year, train_end_year, test_start_year,
     end
   end
 
+  MX_matrix = MX_matrix[MX_matrix[:, 4] .> -Inf, :]
+
   #Create the Z-transformation scales. We can apply this because we know the minimum and maximum age and years of the observation -- regardless of missing data in between.
 
   # Training/seen data is 1950-2000
@@ -80,4 +82,4 @@ start_age = 0
 end_age = 100
 
 #Load the full USA mortality dataset, capping the age range at 100 and year range at 1950.
-X_train, y_train, X_train_square_log_males, X_train_square_log_females, X_test, y_test, X_test_square_log_males, X_test_square_log_females, MX_matrix = load_data("data/USA_Mx_1x1.csv", 1950, 2000, 2001, 2016, 0, 100);
+X_train, y_train, X_train_square_log_males, X_train_square_log_females, X_test, y_test, X_test_square_log_males, X_test_square_log_females, MX_matrix = load_data("data/ISL_Mx_1x1.csv", 1950, 2000, 2001, 2016, 0, 100);
