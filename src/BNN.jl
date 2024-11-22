@@ -199,7 +199,7 @@ function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_spl
     log_LC_test_mean = vcat([log_LC_test_females_mean, log_LC_test_males_mean]...)
     log_LC_test_med = vcat([log_LC_test_females_med, log_LC_test_males_med]...)
 
-    pred_error_df[1, :LC] = PICP(log_LC_test_l05, log_LC_test_u95, USA_MX_matrix[(USA_MX_matrix[:, 1] .> 2000), 4])
+    pred_error_df[1, :LC] = PICP(log_LC_test_l05, log_LC_test_u95, USA_MX_matrix[(USA_MX_matrix[:, 1] .> train_end_year), 4])
     pred_error_df[2, :LC] = MPIW(log_LC_test_l05, log_LC_test_u95)
 
     pred_error_df[3, :LC] = mean((log_LC_test_mean .- y_) .^ 2)
@@ -232,10 +232,10 @@ function get_preds(size_of_data_split, N, train_test; save=true)
 
   if train_test == "train"
     X_test_ = deepcopy(X_train)
-    samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ 2000, :]
+    samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ train_end_year, :]
   elseif train_test == "test"
     X_test_ = deepcopy(X_test)
-    samples_one_p = MX_matrix[MX_matrix[:, 1] .> 2000, :]
+    samples_one_p = MX_matrix[MX_matrix[:, 1] .> train_end_year, :]
   end
 
   sample_N = 10_000
@@ -356,9 +356,9 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
   X_test_ = [repeat([(year - year_mu) / year_sigma], length(age_set))'; ((age_set .- age_mu) ./ age_sigma)'; repeat([gender], length(age_set))']'
 
   if year ≤ 2000
-    samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][perc, :]
+    samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ 2000, :]
   else
-    samples_one_p = MX_matrix[MX_matrix[:, 1] .> 2000, :][perc, :]
+    samples_one_p = MX_matrix[MX_matrix[:, 1] .> 2000, :]
   end
   
   samples_one_p = samples_one_p[(samples_one_p[:, 1] .== year) .&& (samples_one_p[:, 3] .== gender), :]
@@ -377,6 +377,8 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
   nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
   nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.025)
   nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.975)
+  nn_pred_l15 = quantile.(eachcol(nn_pred_samples), 0.125)
+  nn_pred_u85 = quantile.(eachcol(nn_pred_samples), 0.875)
   nn_pred_MAP =  nn_forward(X_test_', θ_for_MAP[idx, :], nn, ps, st, σ_MAP)
 
   p_ = begin
@@ -397,21 +399,22 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
     plot(title=title_, xlab="Age", ylab="log(μ)", label="", legend=:outertopright)
 
     # Plot BNN mean
-    plot!(age_set, nn_pred_mean, label="BNN: Mean", color=:blue, width=2)
+    #plot!(age_set, nn_pred_mean, label="BNN: Mean", color=:blue, width=2)
 
     # Plot BNN median
-    plot!(age_set, nn_pred_median, label="BNN: Median", color=:blue, width=2, style=:dashdot)
+    plot!(age_set, nn_pred_median, label="BNN: Median", color=:purple, width=2, style=:dashdot)
 
     # Plot BNN MAP
-    plot!(age_set, nn_pred_MAP, label="BNN: MAP", color=:blue, width=2, style=:dot)
+    plot!(age_set, nn_pred_MAP, label="BNN: MAP", color=:purple, width=2, style=:dot)
 
+    plot!(age_set, nn_pred_l15, fillrange=nn_pred_u85, label="BNN: 75% CI", color=:blue, width=.1, alpha=.2)
     plot!(age_set, nn_pred_l05, fillrange=nn_pred_u95, label="BNN: 95% CI", color=:blue, width=.1, alpha=.3)
 
     # Plot Observations
     if year ≤ 2000
-      scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Observed Samples")
+      scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Observed Samples", color=:orange)
     else
-      scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Unseen Samples")
+      scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Unseen Samples", color=:orange)
     end
 
     #scatter!(0:100, MX_matrix[(MX_matrix[:, 1] .== year) .&& (MX_matrix[:, 3] .== gender), 4], label="Full Underlying Data", color=:black, markershape=:circle, markersize=1.5, ylim=(-10.0, -0.5))
@@ -448,14 +451,14 @@ begin
     elseif i == 0.1
       N_length = 10_000
     elseif i > 0.1
-      N_length = 25#15_000
+      N_length = 500#15_000
     end
 
     ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
     get_preds(percent_, N_length, "train")
     get_preds(percent_, N_length, "test")
 
-    for i ∈ 1950:4:2016
+    for i ∈ train_start_year:4:test_end_year
       for j ∈ 0:1
 	age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
       end
