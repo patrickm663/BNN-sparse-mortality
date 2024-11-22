@@ -153,7 +153,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   if save == true
     CSV.write("results/full_chains_$(size_of_data_split)_$(N).csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
     CSV.write("results/summary_chains_$(size_of_data_split)_$(N).csv", DataFrame(describe(ch)[1]))
-    savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "../results/chains_plot_$(size_of_data_split)_$(N).png")
+    savefig(StatsPlots.plot(ch[half_N:end, 1:80:end, :]), "results/chains_plot_$(size_of_data_split)_$(N).png")
     CSV.write("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv", DataFrame(Matrix(θ_BNN_samples[:, :, 1]), :auto))
     CSV.write("results/BNN_MAP_RESULTS_$(size_of_data_split)_$(N).csv", MSE_df)
   end
@@ -258,9 +258,6 @@ function get_preds(size_of_data_split, N, train_test; save=true)
   nn_pred_sdev = std(nn_pred_samples; dims=1)'
 
   RESULTS = DataFrame(samples_one_p, [:Year, :Age, :Gender, :Log_Mu])
-  if train_test == "train"
-    RESULTS.In_sample .= Int.(op)
-  end
   RESULTS.BNN_l01 .= nn_pred_l01
   RESULTS.BNN_l05 .= nn_pred_l05
   RESULTS.BNN_mean .= nn_pred_mean
@@ -450,12 +447,13 @@ begin
     ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
     get_preds(percent_, N_length, "train")
     get_preds(percent_, N_length, "test")
-  end
 
-  for i ∈ 1950:10:2021
-    for j ∈ 0:1
-      age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
+    for i ∈ 1950:10:2021
+      for j ∈ 0:1
+	age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
+      end
     end
   end
+
 
 end
