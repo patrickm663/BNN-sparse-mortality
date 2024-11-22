@@ -39,43 +39,6 @@ function nn_forward(x, θ, nn, ps, st, σ_MAP; offset=0)
 end
 
 
-begin
-  for i ∈ [0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
-    if i < 0.01
-      percent_ = "half-%"
-    else
-      percent_ = "$(Int(i*100))%"
-    end
-    one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
-    X_train_one_p = X_train[one_p, :]
-    y_train_one_p = y_train[one_p]
-    samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][one_p, :]
-
-    # 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
-    if i == 0.005
-      N_length = 2_500
-    elseif i == 0.01
-      N_length = 5_000
-    elseif i == 0.05
-      N_length = 7_500
-    elseif i == 0.1
-      N_length = 10_000
-    elseif i > 0.1
-      N_length = 15_000
-    end
-
-    ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
-    get_preds(percent_, N_length, "train")
-    get_preds(percent_, N_length, "test")
-  end
-
-  for i ∈ 1950:10:2021
-    for j ∈ 0:1
-      age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
-    end
-  end
-
-end
 
 function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", save=false)
   half_N = Int(ceil(N/2))
@@ -169,7 +132,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   θ = MCMCChains.group(ch, :parameters).value
 
   # Save MSE
-  MSE_df = DataFrame(:State => ["", "", ""] :MSE => zeros(3), :RMSE => zeros(3), :Time_s => zeros(3))
+  MSE_df = DataFrame(:State => ["", "", ""], :MSE => zeros(3), :RMSE => zeros(3), :Time_s => zeros(3))
   MSE_df[1, :State] = "BNN_training_$(size_of_data_split)"
   MSE_df[1, :MSE] = mean((nn_forward_(Xs', θ[idx, :], nn, ps, st) .- ys) .^ 2)
   MSE_df[1, :RMSE] = sqrt(MSE_df[1, :MSE])
@@ -196,6 +159,54 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   end
 
   return ch, θ, nn, ps, st, idx, θ_BNN_samples, θ_BNN_for_MAP
+end
+
+function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_, training_state, θ_samples, θ_for_MAP)
+
+  sample_N = max(N, 10_000)
+  nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_)[1])
+  σ_MAP = MCMCChains.group(ch, :σ).value[idx, 1]
+
+  # BNN samples
+  for i ∈ 1:sample_N
+    nn_pred_y = nn_forward(X_', θ_samples[i, :], nn, ps, st, σ_MAP; offset=i)
+    nn_pred_samples[i, :] .= nn_pred_y
+  end
+
+  nn_pred_mean = mean(nn_pred_samples; dims=1)'
+  nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
+  nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
+  nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
+  nn_pred_MAP =  nn_forward(X_', θ_for_MAP[idx, :], nn, ps, st, σ_MAP)
+
+  # Apply PICP and MPIW
+  PICP(lb, ub, dp) = sum(lb .≤ dp .≤ ub) / size(dp)[1]
+  MPIW(lb, ub) = sum(ub .- lb) / size(lb)[1]
+
+  pred_error_df = DataFrame(:Score => ["PICP", "MPIW", "MSE_mean", "MSE_median"], :BNN => zeros(4), :LC => zeros(4))
+
+  pred_error_df[1, :BNN] = PICP(nn_pred_l05, nn_pred_u95, y_)
+  pred_error_df[2, :BNN] = MPIW(nn_pred_l05, nn_pred_u95)
+  pred_error_df[3, :BNN] = mean((nn_pred_mean .- y_) .^ 2)
+  pred_error_df[4, :BNN] = mean((nn_pred_median .- y_) .^ 2)
+
+  if training_state == "TEST"
+
+    log_LC_test_males_mean, log_LC_test_males_l05, log_LC_test_males_u95, log_LC_test_females_mean, log_LC_test_females_l05, log_LC_test_females_u95, log_LC_test_males_med, log_LC_test_females_med = lee_carter_full_forecast(sample_N)
+
+    log_LC_test_l05 = vcat([log_LC_test_females_l05, log_LC_test_males_l05]...)
+    log_LC_test_u95 = vcat([log_LC_test_females_u95, log_LC_test_males_u95]...)
+    log_LC_test_mean = vcat([log_LC_test_females_mean, log_LC_test_males_mean]...)
+    log_LC_test_med = vcat([log_LC_test_females_med, log_LC_test_males_med]...)
+
+    pred_error_df[1, :LC] = PICP(log_LC_test_l05, log_LC_test_u95, USA_MX_matrix[(USA_MX_matrix[:, 1] .> 2000), 4])
+    pred_error_df[2, :LC] = MPIW(log_LC_test_l05, log_LC_test_u95)
+
+    pred_error_df[3, :LC] = mean((log_LC_test_mean .- y_) .^ 2)
+    pred_error_df[4, :LC] = mean((log_LC_test_med .- y_) .^ 2)
+  end
+
+  CSV.write("results/pred_error_MSE_$(size_of_data_split)-$(N)-$(training_state).csv", pred_error_df)
 end
 
 function sample_BNN_parameters(ch, N, size_of_data_split) 
@@ -409,4 +420,42 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
   savefig(p_, "../results/$(year)-$(gender)-$(size_of_data_split)-$(N)-BNN.png")
 
   return p_
+end
+
+begin
+  for i ∈ [1.0]#[0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
+    if i < 0.01
+      percent_ = "half-%"
+    else
+      percent_ = "$(Int(i*100))%"
+    end
+    one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
+    X_train_one_p = X_train[one_p, :]
+    y_train_one_p = y_train[one_p]
+    samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][one_p, :]
+
+    # 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
+    if i == 0.005
+      N_length = 2_500
+    elseif i == 0.01
+      N_length = 5_000
+    elseif i == 0.05
+      N_length = 7_500
+    elseif i == 0.1
+      N_length = 10_000
+    elseif i > 0.1
+      N_length = 25#15_000
+    end
+
+    ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
+    get_preds(percent_, N_length, "train")
+    get_preds(percent_, N_length, "test")
+  end
+
+  for i ∈ 1950:10:2021
+    for j ∈ 0:1
+      age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
+    end
+  end
+
 end
