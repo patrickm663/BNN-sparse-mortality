@@ -147,8 +147,8 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
 
   θ_BNN_samples, θ_BNN_for_MAP = sample_BNN_parameters(ch, N, size_of_data_split)
 
-  pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TRAIN", θ_BNN_samples, θ_BNN_for_MAP)
-  pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
+  #pred_interval_score(X_train, y_train, ch, nn, ps, st, idx, perc, size_of_data_split, N, "TRAIN", θ_BNN_samples, θ_BNN_for_MAP)
+  #pred_interval_score(X_test, y_test, ch, nn, ps, st, idx, perc, size_of_data_split, N, "TEST", θ_BNN_samples, θ_BNN_for_MAP)
 
   if save == true
     CSV.write("../results/full_chains_$(size_of_data_split)_$(N).csv", DataFrame(MCMCChains.group(ch, :parameters).value[:, :, 1], :auto))
@@ -161,7 +161,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   return ch, θ, nn, ps, st, idx, θ_BNN_samples, θ_BNN_for_MAP
 end
 
-function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_split, N, tstate_, training_state, θ_samples, θ_for_MAP)
+function pred_interval_score(X_, y_, ch, nn, ps, st, idx, perc, size_of_data_split, N, training_state, θ_samples, θ_for_MAP)
 
   sample_N = max(N, 10_000)
   nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_)[1])
