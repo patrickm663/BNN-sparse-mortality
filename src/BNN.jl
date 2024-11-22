@@ -352,12 +352,11 @@ function get_preds(size_of_data_split, N, train_test; save=true)
 end
 
 function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N, θ_samples, θ_for_MAP)
+  age_set = Array(0:0.5:100)
+  X_test_ = [repeat([(year - year_mu) / year_sigma], length(age_set)); (age_set .- age_mu) ./ age_sigma; repeat([gender], length(age_set))]#X_train[(X_train[:, 1] .== (year .- year_mu) ./ year_sigma) .&& (X_train[:, 3] .== gender), :]
   if year ≤ 2000
-    X_test_ = X_train[(X_train[:, 1] .== (year .- year_mu) ./ year_sigma) .&& (X_train[:, 3] .== gender), :]
     samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][perc, :]
     samples_one_p = samples_one_p[(samples_one_p[:, 1] .== year) .&& (samples_one_p[:, 3] .== gender), :]
-  else
-    X_test_ = X_test[(X_test[:, 1] .== (year .- year_mu) ./ year_sigma) .&& (X_test[:, 3] .== gender), :]
   end
 
   sample_N = max(N, 10_000)
@@ -394,20 +393,20 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
     plot(title=title_, xlab="Age", ylab="log(μ)", label="", legend=:outertopright)
 
     # Plot BNN mean
-    plot!(0:100, nn_pred_mean, label="BNN: Mean", color=:blue, width=2)
+    plot!(age_set, nn_pred_mean, label="BNN: Mean", color=:blue, width=2)
 
     # Plot BNN median
-    plot!(0:100, nn_pred_median, label="BNN: Median", color=:blue, width=2, style=:dashdot)
+    plot!(age_set, nn_pred_median, label="BNN: Median", color=:blue, width=2, style=:dashdot)
 
     # Plot BNN MAP
-    plot!(0:100, nn_pred_MAP, label="BNN: MAP", color=:blue, width=2, style=:dot)
+    plot!(age_set, nn_pred_MAP, label="BNN: MAP", color=:blue, width=2, style=:dot)
 
     # Plot Observations
     if year ≤ 2000
       scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Observed Samples")
     end
 
-    scatter!(0:100, MX_matrix[(MX_matrix[:, 1] .== year) .&& (MX_matrix[:, 3] .== gender), 4], label="Full Underlying Data", color=:black, markershape=:circle, markersize=1.5, ylim=(-10.0, -0.5))
+    #scatter!(0:100, MX_matrix[(MX_matrix[:, 1] .== year) .&& (MX_matrix[:, 3] .== gender), 4], label="Full Underlying Data", color=:black, markershape=:circle, markersize=1.5, ylim=(-10.0, -0.5))
 
     plot!()
   end
