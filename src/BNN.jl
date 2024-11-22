@@ -353,7 +353,7 @@ end
 
 function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N, θ_samples, θ_for_MAP)
   age_set = Array(0:0.5:100)
-  X_test_ = [repeat([(year - year_mu) / year_sigma], length(age_set)); (age_set .- age_mu) ./ age_sigma; repeat([gender], length(age_set))]#X_train[(X_train[:, 1] .== (year .- year_mu) ./ year_sigma) .&& (X_train[:, 3] .== gender), :]
+  X_test_ = [repeat([(year - year_mu) / year_sigma], length(age_set))'; ((age_set .- age_mu) ./ age_sigma)'; repeat([gender], length(age_set))']'
   if year ≤ 2000
     samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][perc, :]
     samples_one_p = samples_one_p[(samples_one_p[:, 1] .== year) .&& (samples_one_p[:, 3] .== gender), :]
@@ -371,8 +371,8 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
   nn_pred_mean = mean(nn_pred_samples; dims=1)'
   nn_pred_median = quantile.(eachcol(nn_pred_samples), 0.50)
-  nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.05)
-  nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.95)
+  nn_pred_l05 = quantile.(eachcol(nn_pred_samples), 0.025)
+  nn_pred_u95 = quantile.(eachcol(nn_pred_samples), 0.975)
   nn_pred_MAP =  nn_forward(X_test_', θ_for_MAP[idx, :], nn, ps, st, σ_MAP)
 
   p_ = begin
@@ -400,6 +400,8 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
     # Plot BNN MAP
     plot!(age_set, nn_pred_MAP, label="BNN: MAP", color=:blue, width=2, style=:dot)
+
+    plot!(age_set, nn_pred_l05, fillrange=nn_pred_u95, label="BNN: 95% CI", color=:blue, width=.1, alpha=.3)
 
     # Plot Observations
     if year ≤ 2000
@@ -447,7 +449,7 @@ begin
     get_preds(percent_, N_length, "train")
     get_preds(percent_, N_length, "test")
 
-    for i ∈ 1950:10:2021
+    for i ∈ 1950:4:2016
       for j ∈ 0:1
 	age_plot(i, j, ch_p, nn_p, ps_p, st_p, idx_p, one_p, percent_, N_length, θ_BNN_samples_p, θ_BNN_for_MAP_p)
       end
