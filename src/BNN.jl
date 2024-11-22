@@ -228,7 +228,7 @@ function get_preds(size_of_data_split, N, train_test; save=false)
 	     Dense(8 => 8, swish),
 	     Dense(8 => 1))
 
-  ps, st = Lux.setup(rng, nn)
+  ps, st = Lux.setup(Xoshiro(1456789), nn)
 
   if train_test == "train"
     X_test_ = deepcopy(X_train)
