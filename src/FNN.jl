@@ -193,7 +193,7 @@ for i ∈ [1.0]#[0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
   elseif i == 0.1
     N_length = 10_000
   elseif i > 0.1
-    N_length = 25#15_000
+    N_length = 500#15_000
   else
     N_length = 100 # Debugging
   end
