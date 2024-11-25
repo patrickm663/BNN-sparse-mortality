@@ -241,7 +241,7 @@ function get_preds(size_of_data_split, N, train_test; save=true)
   sample_N = 10_000
   nn_pred_samples = Matrix{Float64}(undef, sample_N, size(X_test_)[1])
   θ_samples = Matrix(DataFrame(CSV.File("results/BNN_full_posterior_samples_$(size_of_data_split)_$(N).csv")))
-  σ_MAP = 0.04
+  σ_MAP = 0.39#0.04
 
   # BNN samples
   for i ∈ 1:sample_N
@@ -451,7 +451,7 @@ begin
     elseif i == 0.1
       N_length = 10_000
     elseif i > 0.1
-      N_length = 25#2_500#15_000
+      N_length = 2_500#25#15_000
     end
 
     ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
