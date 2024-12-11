@@ -6,6 +6,7 @@ function load_data(file_path, train_start_year, train_end_year, test_start_year,
 
   # Get 1950+ and ≤ 100
   MX_raw = MX_raw[(MX_raw.Year .≥ train_start_year) .&& (start_age .≤ MX_raw.Age .≤ end_age), :]
+  train_start_year = max(MX_raw.Year[1], train_start_year)
 
   # For Lee-Carter
   MX_square_log_males = log.(HMD.transform(MX_raw, :Male)[:, 2:end])
