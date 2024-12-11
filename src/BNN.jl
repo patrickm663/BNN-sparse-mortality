@@ -4,7 +4,7 @@ include("load_data.jl")
 using Lux, Tracker, Optimisers, Functors, DataFrames, Plots, StatsPlots
 using Turing, Distributions, ProgressLogging
 using Random, LinearAlgebra, ComponentArrays
-import ADTypes
+#import ADTypes
 #import Mooncake
 
 
@@ -91,7 +91,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   end
 
   t_bnn = time()
-  ad_type = ADTypes.AutoTracker()#ADTypes.AutoEnzyme()#AutoMooncake(; config=nothing)#ADTypes.AutoTracker()
+  ad_type = Turing.AutoTracker()#ADTypes.AutoEnzyme()#AutoMooncake(; config=nothing)#ADTypes.AutoTracker()
   if sampling_algorithm == "NUTS"
     ch = sample(
 		Xoshiro(1456789),
@@ -355,7 +355,7 @@ function get_preds(size_of_data_split, N, train_test; save=true)
 end
 
 function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N, θ_samples, θ_for_MAP)
-  age_set = Array(0:0.5:100)
+age_set = Array(start_age:0.5:end_age)
   X_test_ = [repeat([(year - year_mu) / year_sigma], length(age_set))'; ((age_set .- age_mu) ./ age_sigma)'; repeat([gender], length(age_set))']'
 
   if year ≤ train_end_year
