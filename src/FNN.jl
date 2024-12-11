@@ -88,6 +88,7 @@ function train_single_FNN(Xs, ys, epochs, batch)
 	age_plot(i, cntry, X_train_c) 
       end
     end
+  end
 
   end
 
