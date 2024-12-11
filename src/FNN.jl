@@ -84,8 +84,8 @@ function train_single_FNN(Xs, ys, epochs, batch)
 
   end
 
-  for cntry in vcat(keys(ex_mapping_c)...)[1:2]
-    for i in train_start_year:5:test_end_year
+  for cntry in vcat(keys(ex_mapping_c)...)
+    for i in train_start_year:10:test_end_year
       if i > train_end_year
 	age_plot(i, cntry, X_test_c) 
       else
@@ -291,5 +291,5 @@ function train_single_FNN(Xs, ys, epochs, batch)
       N_length = 1_000 # Debugging
     end
     #fnn_prediction_interval(X_train_b, y_train_b, percent_; B=N_length)
-    train_single_FNN(X_train_c, y_train_c, 2^4, 2^15)
+    train_single_FNN(X_train_c, y_train_c, 2^9, 2^15)
   end
