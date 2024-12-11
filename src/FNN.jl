@@ -73,7 +73,7 @@ function train_single_FNN(Xs, ys, epochs, batch)
     plt = begin
       plot(xlab="Age", ylab="log mu", title="$(country) - $(year)")
       scatter!(start_age:end_age, y_actuals, label="Actuals")
-      plot!(start_age_end_age, y_pred, label="Predictions")
+      plot!(start_age:end_age, y_pred, label="Predictions")
     end
 
     savefig(plt, "results/FNN_multi_pop_model$(country)_$(year)_$(epochs)_$(batch).png")
