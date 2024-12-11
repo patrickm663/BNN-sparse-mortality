@@ -65,8 +65,8 @@ function train_single_FNN(Xs, ys, epochs, batch)
   savefig(plot(half_losses:length(losses), losses[half_losses:end], ylab="MSE", xlab="Epochs"), "results/FNN_multi_pop_losses_$(epochs)_$(batch).png")
 
   function age_plot(year, country, X)
-    X_feat = X[(X[:, 1] .== (year-year_mu_c)/year_sigma_c) .&& X[:, 3] .== (ex_country_c[country]-ex_mu_c)/ex_sigma_c, :]
-    y_actuals = MX_matrix_c[(MX_matrix_c[:, 1] .== year) .&& (MX_matrix_c[:, 3] .== ex_country_c[country]), 4]
+    X_feat = X[(X[:, 1] .== (year-year_mu_c)/year_sigma_c) .&& X[:, 3] .== (ex_mapping_c[country]-ex_mu_c)/ex_sigma_c, :]
+    y_actuals = MX_matrix_c[(MX_matrix_c[:, 1] .== year) .&& (MX_matrix_c[:, 3] .== ex_mapping_c[country]), 4]
 
     y_pred = FNN_forward(X_feat', tstate_)'
 
@@ -80,9 +80,9 @@ function train_single_FNN(Xs, ys, epochs, batch)
 
   end
 
-  for cntry in keys(ex_mapping_c)[1:2]
-    for i in train_year_start:5:test_year_end
-      if i > train_year_end
+  for cntry in vcat(keys(ex_mapping_c)...)[1:2]
+    for i in train_start_year:5:test_end_year
+      if i > train_end_year
 	age_plot(i, cntry, X_test_c) 
       else
 	age_plot(i, cntry, X_train_c) 
@@ -287,5 +287,5 @@ function train_single_FNN(Xs, ys, epochs, batch)
       N_length = 1_000 # Debugging
     end
     #fnn_prediction_interval(X_train_b, y_train_b, percent_; B=N_length)
-    train_single_FNN(X_train_c, y_train_c, 2^9, 2^15)
+    train_single_FNN(X_train_c, y_train_c, 2^4, 2^15)
   end
