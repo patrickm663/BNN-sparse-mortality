@@ -1,8 +1,69 @@
 include("load_data.jl")
 
-using Lux, Optimisers, Zygote, ComponentArrays
+using Lux, Optimisers, Zygote, Enzyme, ComponentArrays, LuxCUDA
 using Random, LinearAlgebra, Distributions
-using ProgressLogging
+using ProgressLogging, Plots
+
+function train_single_FNN(Xs, ys, epochs, batch)
+
+  p_ = rand(Xoshiro(1456789), Bernoulli(1.0), size(Xs)[1])
+  Xs = Xs[p_, :]
+  ys = ys[p_]
+  # Model structure
+  fnn = Chain(
+	      Dense(size(Xs)[2] => 8, swish), 
+	      Dense(8 => 8, swish),
+	      Dense(8 => 8, swish),
+	      Dense(8 => 8, swish),
+	      Dense(8 => 1))
+
+  dev_cpu = cpu_device()
+  dev_gpu = cpu_device() # CPU throughout
+
+  ps_fnn, st_fnn = Lux.setup(Xoshiro(1456789), fnn) |> dev_gpu
+
+  opt = Adam(0.01f0)
+  loss_function = MSELoss()
+  tstate_ = Training.TrainState(fnn, ps_fnn, st_fnn, opt)
+  vjp_rule = AutoZygote() # ReverseDiff backend
+
+  function train_FNN(tstate::Training.TrainState, vjp, data, epochs; loss_func=loss_function)
+    ls = []
+    data = data .|> dev_gpu
+    # Check for early-stopping
+    for epoch ∈ 1:epochs
+      _, loss, _, tstate = Training.single_train_step!(vjp, loss_func, data, tstate)
+      push!(ls, loss)
+      #if (epoch ≥ 250) && (epoch % 10 == 1) && (losses[epoch] ≥ losses[(epoch-10)])
+	#return tstate
+      #end
+    end
+    return tstate, ls
+  end
+
+  FNN_forward(X_, ts_; pars=ts_.parameters) = dev_cpu(Lux.apply(ts_.model, dev_gpu(X_ |> f32), pars, ts_.states)[1])
+
+  losses = []
+  @time for i in 1:batch:length(ys)
+    min_len = min(i+batch, length(ys))
+    tstate_, loss_ = train_FNN(tstate_, vjp_rule, (Xs[i:min_len, :]' |> f32, Matrix(ys[i:min_len]' |> f32)), epochs)
+    losses = vcat(losses, loss_)
+  end
+
+  y_train_pred = FNN_forward(X_train_c', tstate_)'
+  y_test_pred = FNN_forward(X_test_c', tstate_)'
+
+  EXP_MSE(y, y_) = mean((exp.(y) .- exp.(y_)) .^ 2)
+
+  RESULTS = DataFrame("MSE_TRAIN" => [0.0], "MSE_TEST" => [0.0])
+
+  RESULTS[1, :MSE_TRAIN] = EXP_MSE(y_train_c, y_train_pred)
+  RESULTS[1, :MSE_TEST] = EXP_MSE(y_test_c, y_test_pred)
+
+  CSV.write("results/FNN_multi_pop_$(epochs)_$(batch).csv", RESULTS)
+  half_losses = Int(floor(length(losses)/2))
+  savefig(plot(half_losses:length(losses), losses[half_losses:end], ylab="MSE", xlab="Epochs"), "results/FNN_multi_pop_losses_$(epochs)_$(batch).png")
+end
 
 function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=true)
   # Model structure
@@ -54,7 +115,7 @@ function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=true)
     return init_params
   end
 
-  bootstrap_epochs = 800#max(800, Int(floor(size(Xs)[1]*1.2)))
+  bootstrap_epochs = 5_000#max(800, Int(floor(size(Xs)[1]*1.2)))
 
   bootstrap_samples_train_s = Matrix{Float64}(undef, B, size(Xs)[1])
   bootstrap_samples_train = Matrix{Float64}(undef, B, size(X_train)[1])
@@ -87,7 +148,7 @@ function fnn_prediction_interval(Xs, ys, percent_s; B=100, b=0.75, save=true)
 
   bootstrap_mean_test = mean(bootstrap_samples_test; dims=1)'
   bootstrap_var_test = var(bootstrap_samples_test; dims=1)'
-  
+
   # Set-up and train the residuals NN
   residuals_train_s = max.((ys .- bootstrap_mean_train_s) .^ 2 .- bootstrap_var_train_s, 0)
 
@@ -195,7 +256,8 @@ for i ∈ [1.0]#[0.005, 0.01, 0.05, 0.1, 0.25, 0.5, 1.0]
   elseif i > 0.1
     N_length = 500#15_000
   else
-    N_length = 100 # Debugging
+    N_length = 1_000 # Debugging
   end
-  fnn_prediction_interval(X_train_b, y_train_b, percent_; B=N_length)
+  #fnn_prediction_interval(X_train_b, y_train_b, percent_; B=N_length)
+  train_single_FNN(X_train_c, y_train_c, 250, 2^10)
 end

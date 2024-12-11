@@ -4,6 +4,9 @@ include("load_data.jl")
 using Lux, Tracker, Optimisers, Functors, DataFrames, Plots, StatsPlots
 using Turing, Distributions, ProgressLogging
 using Random, LinearAlgebra, ComponentArrays
+import ADTypes
+import Mooncake
+import Enzyme
 
 
 function append_BNN_params(N, full_param_length, random_param_length, ch, initial_params, bkwd)
@@ -89,11 +92,12 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   end
 
   t_bnn = time()
+  ad_type = ADTypes.AutoForwardDiff()#ADTypes.AutoEnzyme()#AutoMooncake(; config=nothing)#ADTypes.AutoTracker()
   if sampling_algorithm == "NUTS"
     ch = sample(
 		Xoshiro(1456789),
 		bayes_nn(Xs', ys), 
-		NUTS(0.9; adtype=AutoTracker()),
+		NUTS(0.9; adtype=ad_type),
 		#HMCDA(200, 0.9, 0.1; adtype=AutoTracker()),
 		#SGHMC(; learning_rate=1e-8, momentum_decay=0.55, adtype=AutoTracker()),
 		N; 
@@ -451,7 +455,7 @@ begin
     elseif i == 0.1
       N_length = 10_000
     elseif i > 0.1
-      N_length = 2_500#25#15_000
+      N_length = 25#2_500#25#15_000
     end
 
     ch_p, θ_p, nn_p, ps_p, st_p, idx_p, θ_BNN_samples_p, θ_BNN_for_MAP_p = BNN(X_train_one_p, y_train_one_p, N_length, one_p, percent_)
