@@ -291,5 +291,5 @@ function train_single_FNN(Xs, ys, epochs, batch)
       N_length = 1_000 # Debugging
     end
     #fnn_prediction_interval(X_train_b, y_train_b, percent_; B=N_length)
-    train_single_FNN(X_train_c, y_train_c, 2^9, 2^15)
+    train_single_FNN(X_train_c, y_train_c, 2^10, 2^15)
   end
