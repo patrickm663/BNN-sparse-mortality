@@ -5,8 +5,7 @@ using Lux, Tracker, Optimisers, Functors, DataFrames, Plots, StatsPlots
 using Turing, Distributions, ProgressLogging
 using Random, LinearAlgebra, ComponentArrays
 import ADTypes
-import Mooncake
-import Enzyme
+#import Mooncake
 
 
 function append_BNN_params(N, full_param_length, random_param_length, ch, initial_params, bkwd)
@@ -92,7 +91,7 @@ function BNN(Xs, ys, N, perc, size_of_data_split; sampling_algorithm="NUTS", sav
   end
 
   t_bnn = time()
-  ad_type = ADTypes.AutoForwardDiff()#ADTypes.AutoEnzyme()#AutoMooncake(; config=nothing)#ADTypes.AutoTracker()
+  ad_type = ADTypes.AutoTracker()#ADTypes.AutoEnzyme()#AutoMooncake(; config=nothing)#ADTypes.AutoTracker()
   if sampling_algorithm == "NUTS"
     ch = sample(
 		Xoshiro(1456789),
@@ -359,10 +358,10 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
   age_set = Array(0:0.5:100)
   X_test_ = [repeat([(year - year_mu) / year_sigma], length(age_set))'; ((age_set .- age_mu) ./ age_sigma)'; repeat([gender], length(age_set))']'
 
-  if year ≤ 2000
-    samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ 2000, :]
+  if year ≤ train_end_year
+    samples_one_p = MX_matrix[MX_matrix[:, 1] .≤ train_end_year, :]
   else
-    samples_one_p = MX_matrix[MX_matrix[:, 1] .> 2000, :]
+    samples_one_p = MX_matrix[MX_matrix[:, 1] .> train_end_year, :]
   end
   
   samples_one_p = samples_one_p[(samples_one_p[:, 1] .== year) .&& (samples_one_p[:, 3] .== gender), :]
@@ -387,7 +386,7 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
 
   p_ = begin
     # Plot front-matter
-    if year ≤ 2000
+    if year ≤ train_end_year
       if gender == 1
 	title_ = "Mortality Rates using $(size_of_data_split) of Data \n In-sample: $(year); Males"
       else
@@ -415,7 +414,7 @@ function age_plot(year, gender, ch, nn, ps, st, idx, perc, size_of_data_split, N
     plot!(age_set, nn_pred_l05, fillrange=nn_pred_u95, label="BNN: 95% CI", color=:blue, width=.1, alpha=.3)
 
     # Plot Observations
-    if year ≤ 2000
+    if year ≤ train_end_year
       scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Observed Samples", color=:orange)
     else
       scatter!(samples_one_p[:, 2], samples_one_p[:, 4], label="Unseen Samples", color=:orange)
@@ -443,7 +442,7 @@ begin
     one_p = rand(Xoshiro(1456789), Bernoulli(i), size(X_train)[1])
     X_train_one_p = X_train[one_p, :]
     y_train_one_p = y_train[one_p]
-    samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ 2000, :][one_p, :]
+    samples_one_p_ = MX_matrix[MX_matrix[:, 1] .≤ train_end_year, :][one_p, :]
 
     # 0.5% = 2 500, 1% = 5 000, 5% = 7 500, 10% = 10 000, 25% = 15 000
     if i == 0.005
