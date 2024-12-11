@@ -70,13 +70,17 @@ function train_single_FNN(Xs, ys, epochs, batch)
 
     y_pred = FNN_forward(X_feat', tstate_)'
 
-    plt = begin
-      plot(xlab="Age", ylab="log mu", title="$(country) - $(year)")
-      scatter!(start_age:end_age, y_actuals, label="Actuals")
-      plot!(start_age:end_age, y_pred, label="Predictions")
-    end
+    try
+      plt = begin
+	plot(xlab="Age", ylab="log mu", title="$(country) - $(year)")
+	scatter!(start_age:end_age, y_actuals, label="Actuals")
+	plot!(start_age:end_age, y_pred, label="Predictions")
+      end
 
-    savefig(plt, "results/FNN_multi_pop_model$(country)_$(year)_$(epochs)_$(batch).png")
+      savefig(plt, "results/FNN_multi_pop_model$(country)_$(year)_$(epochs)_$(batch).png")
+    catch
+      println("$(country)-$(year) is invalid, skipping")
+    end
 
   end
 
